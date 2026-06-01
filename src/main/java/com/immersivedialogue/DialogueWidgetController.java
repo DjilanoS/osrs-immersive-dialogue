@@ -78,6 +78,11 @@ class DialogueWidgetController
 	private static final int HEAD_H = 140;
 	private static final int NO_ANIM = -1;
 
+	// Adaptive OPTIONS box sizing. EST_OPTION_TEXT_H over-estimates the runescape body line height so the
+	// box always covers the option rows the overlay draws (their click rects must stay inside it).
+	private static final int EST_OPTION_TEXT_H = 18;
+	private static final int OPTIONS_MAX_H = 280;
+
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
 
@@ -190,9 +195,11 @@ class DialogueWidgetController
 
 		final int cw = client.getCanvasWidth();
 		final int ch = client.getCanvasHeight();
+		// Options grow the box to fit their count; plain dialogue keeps the fixed height.
+		final int boxH = (kind == Kind.OPTIONS) ? optionsBoxHeight() : BOX_H;
 		final int x = ((cw - BOX_W) / 2) + config.horizontalOffset();
-		final int y = ch - BOX_H - config.bottomMargin();
-		bounds = new Rectangle(x, y, BOX_W, BOX_H);
+		final int y = ch - boxH - config.bottomMargin();
+		bounds = new Rectangle(x, y, BOX_W, boxH);
 
 		// Options publish their own hit-rects from the overlay's render pass; plain dialogue has none,
 		// so clear any stale targets here.
@@ -223,6 +230,47 @@ class DialogueWidgetController
 	void setOptionHits(List<OptionHit> hits)
 	{
 		optionHits = hits == null ? Collections.emptyList() : hits;
+	}
+
+	/**
+	 * Adaptive height for the OPTIONS box so it snugly fits its option count instead of being a fixed,
+	 * cavernous box. Deliberately over-estimates line heights so the box always covers the rows the
+	 * overlay draws; the spacing constants are shared with {@link ImmersiveDialogueOverlay} so the two
+	 * never drift.
+	 */
+	private int optionsBoxHeight()
+	{
+		int h = ImmersiveDialogueOverlay.INSET * 2; // top + bottom padding
+		for (final Option o : options)
+		{
+			if (o.subid == 0)
+			{
+				// "Select an Option" header, drawn in the larger title font as a plain line.
+				h += (config.titleFontSize() + 6) + ImmersiveDialogueOverlay.LINE_GAP;
+			}
+			else
+			{
+				h += EST_OPTION_TEXT_H + (ImmersiveDialogueOverlay.OPTION_PAD * 2) + ImmersiveDialogueOverlay.OPTION_GAP;
+			}
+		}
+		return Math.min(h, OPTIONS_MAX_H);
+	}
+
+	/** True if the canvas point is over the dialogue box (incl. backdrop padding) or the head beside it. */
+	boolean blocks(int px, int py)
+	{
+		final Rectangle box = bounds;
+		if (box != null)
+		{
+			final int pad = config.backdropPadding();
+			if (px >= box.x - pad && px < box.x + box.width + pad
+				&& py >= box.y - pad && py < box.y + box.height + pad)
+			{
+				return true;
+			}
+		}
+		final Rectangle h = headBounds;
+		return h != null && h.contains(px, py);
 	}
 
 	private static boolean visible(Widget w)

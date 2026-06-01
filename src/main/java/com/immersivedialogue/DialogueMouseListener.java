@@ -1,6 +1,5 @@
 package com.immersivedialogue;
 
-import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -73,24 +72,12 @@ class DialogueMouseListener extends MouseAdapter
 		{
 			return event;
 		}
-		final Rectangle box = controller.getBounds();
-		if (box == null)
-		{
-			return event;
-		}
 		// Let the middle button (camera drag) through.
 		if (SwingUtilities.isMiddleMouseButton(event))
 		{
 			return event;
 		}
-
-		final int pad = config.backdropPadding();
-		final Rectangle region = new Rectangle(box.x - pad, box.y - pad,
-			box.width + (pad * 2), box.height + (pad * 2));
-		final Rectangle head = controller.getHeadBounds();
-		final boolean inside = region.contains(event.getPoint())
-			|| (head != null && head.contains(event.getPoint()));
-		if (!inside)
+		if (!controller.blocks(event.getX(), event.getY()))
 		{
 			return event;
 		}

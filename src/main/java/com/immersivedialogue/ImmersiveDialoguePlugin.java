@@ -3,9 +3,13 @@ package com.immersivedialogue;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
 import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
+import net.runelite.api.Point;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.PostMenuSort;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -42,6 +46,9 @@ public class ImmersiveDialoguePlugin extends Plugin
 
 	@Inject
 	private ImmersiveDialogueConfig config;
+
+	@Inject
+	private Client client;
 
 	@Override
 	protected void startUp()
@@ -81,6 +88,23 @@ public class ImmersiveDialoguePlugin extends Plugin
 			log.debug("WIDGET_CONTINUE param0={} param1={} id={} option='{}' target='{}' widget(id={} index={})",
 				event.getParam0(), event.getParam1(), event.getId(), event.getMenuOption(),
 				event.getMenuTarget(), w != null ? w.getId() : -1, w != null ? w.getIndex() : -1);
+		}
+	}
+
+	@Subscribe
+	public void onPostMenuSort(PostMenuSort event)
+	{
+		// Suppress the world hover menu/tooltip while the cursor is over the relocated box, so nothing in
+		// the 3D world (e.g. "Pickup Sweetcorn") shows through it. Consuming the click blocks the action;
+		// this blocks the hover text too. Skip when a right-click menu is already open.
+		if (!config.relocate() || client.isMenuOpen())
+		{
+			return;
+		}
+		final Point mouse = client.getMouseCanvasPosition();
+		if (mouse != null && controller.blocks(mouse.getX(), mouse.getY()))
+		{
+			client.getMenu().setMenuEntries(new MenuEntry[0]);
 		}
 	}
 

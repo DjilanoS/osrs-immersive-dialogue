@@ -23,9 +23,15 @@ import net.runelite.client.ui.overlay.OverlayPosition;
  */
 class ImmersiveDialogueOverlay extends Overlay
 {
-	private static final int INSET = 16;
-	private static final int LINE_GAP = 3;
+	// Package-private: the controller reads these to size the adaptive options box (see optionsBoxHeight).
+	static final int INSET = 16;
+	static final int LINE_GAP = 3;
+	static final int OPTION_PAD = 5;
+	static final int OPTION_GAP = 6;
 	private static final Color HOVER_COLOR = new Color(255, 255, 255, 45);
+	private static final String CONTINUE_TEXT = "Click here to continue";
+	private static final Color CONTINUE_COLOR = new Color(255, 255, 255, 165);
+	private static final Color CONTINUE_HOVER_COLOR = Color.WHITE;
 
 	private final Client client;
 	private final DialogueWidgetController controller;
@@ -99,6 +105,25 @@ class ImmersiveDialogueOverlay extends Overlay
 		}
 
 		drawTextBlock(g, b, lines);
+		// Plain NPC/player dialogue advances on a click anywhere in the box; hint at that affordance.
+		drawContinuePrompt(g, b, bodyFont);
+	}
+
+	/** A bottom-centered "click to continue" hint that brightens while the cursor is over the box. */
+	private void drawContinuePrompt(Graphics2D g, Rectangle b, Font font)
+	{
+		final FontMetrics fm = g.getFontMetrics(font);
+		final int x = b.x + ((b.width - fm.stringWidth(CONTINUE_TEXT)) / 2);
+		final int y = b.y + b.height - fm.getDescent() - (INSET / 2);
+
+		final Point mouse = client.getMouseCanvasPosition();
+		final boolean hover = mouse != null && b.contains(mouse.getX(), mouse.getY());
+
+		g.setFont(font);
+		g.setColor(Color.BLACK);
+		g.drawString(CONTINUE_TEXT, x + 1, y + 1);
+		g.setColor(hover ? CONTINUE_HOVER_COLOR : CONTINUE_COLOR);
+		g.drawString(CONTINUE_TEXT, x, y);
 	}
 
 	private void drawOptions(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
@@ -133,26 +158,40 @@ class ImmersiveDialogueOverlay extends Overlay
 		for (final Line line : lines)
 		{
 			final FontMetrics fm = g.getFontMetrics(line.font);
+			final int x = b.x + ((b.width - fm.stringWidth(line.text)) / 2);
+
 			if (line.subid >= 0)
 			{
-				final Rectangle hit = new Rectangle(b.x, y - (LINE_GAP / 2), b.width, fm.getHeight() + LINE_GAP);
+				// Clickable option: a padded, comfortably-spaced hover/hit row.
+				final int rowH = fm.getAscent() + fm.getDescent() + (OPTION_PAD * 2);
+				final Rectangle hit = new Rectangle(b.x, y, b.width, rowH);
 				if (mouse != null && hit.contains(mouse.getX(), mouse.getY()))
 				{
 					g.setColor(HOVER_COLOR);
 					g.fillRect(hit.x, hit.y, hit.width, hit.height);
 				}
 				hits.add(new DialogueWidgetController.OptionHit(line.subid, hit));
-			}
 
-			y += fm.getAscent();
-			final int x = b.x + ((b.width - fm.stringWidth(line.text)) / 2);
-			g.setFont(line.font);
-			// shadow for legibility
-			g.setColor(Color.BLACK);
-			g.drawString(line.text, x + 1, y + 1);
-			g.setColor(line.color);
-			g.drawString(line.text, x, y);
-			y += fm.getDescent() + LINE_GAP;
+				final int baseline = y + OPTION_PAD + fm.getAscent();
+				g.setFont(line.font);
+				g.setColor(Color.BLACK);
+				g.drawString(line.text, x + 1, baseline + 1);
+				g.setColor(line.color);
+				g.drawString(line.text, x, baseline);
+				y += rowH + OPTION_GAP;
+			}
+			else
+			{
+				// Plain line (title / body / "Select an Option" header): original tight spacing.
+				y += fm.getAscent();
+				g.setFont(line.font);
+				// shadow for legibility
+				g.setColor(Color.BLACK);
+				g.drawString(line.text, x + 1, y + 1);
+				g.setColor(line.color);
+				g.drawString(line.text, x, y);
+				y += fm.getDescent() + LINE_GAP;
+			}
 		}
 		return hits;
 	}
