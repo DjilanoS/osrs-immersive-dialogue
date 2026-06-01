@@ -25,12 +25,16 @@ import net.runelite.api.widgets.WidgetType;
  * and a Graphics2D overlay cannot draw a live 3D model. Hence we create one MODEL widget on the
  * top-level root and reuse it forever (creating per line stacks duplicate heads).</p>
  *
- * <p><b>Animation:</b> the head is <b>static by default</b>. Animating a relocated head is opt-in
- * ({@code animateHead}) because a created MODEL widget does not always loop a sequence safely — the
- * client renderer can index one past the last frame and crash ({@code ArrayIndexOutOfBounds}) on its
- * own render thread, where we cannot catch it. A static head never advances a frame, so it never
- * crashes. When animation is enabled we reset the frame (set {@code animationId = -1} for a frame,
- * then apply the real animation) on every model <i>and</i> animation change as a best effort.</p>
+ * <p><b>Animation:</b> animating a relocated head is opt-in ({@code animateHead}). A reused MODEL
+ * widget keeps an internal {@code modelFrame} counter that the client's render thread advances; if
+ * a new head's shorter sequence is applied while that counter still holds a stale index from a
+ * previous longer animation, the renderer indexes past the frame array and crashes
+ * ({@code ArrayIndexOutOfBounds}) on its own thread, where we cannot catch it. Setting
+ * {@code animationId = -1} only skips a frame — it does not reset {@code modelFrame}. So instead we
+ * <b>recreate the MODEL widget whenever the head model or animation changes</b>: a freshly created
+ * widget starts at frame 0, so a stale index can never be applied to a new sequence. The model
+ * lives inside a plugin-owned container so {@code deleteAllChildren()} resets only our own child
+ * and never touches game-owned widgets on the interface root.</p>
  */
 @Slf4j
 @Singleton
@@ -65,17 +69,19 @@ class DialogueWidgetController
 	@Getter
 	private List<String> options = Collections.emptyList();
 
-	// Our single head widget / diagnostics (read by the debug overlay).
+	// Our head widgets / diagnostics (read by the debug overlay).
 	@Getter
 	private Widget headSource;
 	@Getter
 	private Widget host;
 	@Getter
+	private Widget headContainer;
+	@Getter
 	private Widget createdHead;
 
 	private int builtModelType = Integer.MIN_VALUE;
 	private int builtModelId = Integer.MIN_VALUE;
-	private int appliedAnimation = Integer.MIN_VALUE;
+	private int builtAnimation = Integer.MIN_VALUE;
 
 	@Inject
 	DialogueWidgetController(Client client, ImmersiveDialogueConfig config)
@@ -218,16 +224,38 @@ class DialogueWidgetController
 
 		try
 		{
-			// Create the single head widget exactly once. Never create a second one.
-			if (createdHead == null)
+			// Plugin-owned container that exclusively holds our MODEL widget. Recreating the model
+			// child inside it (deleteAllChildren + createChild) resets the renderer's internal frame
+			// counter to 0; because the container is ours, that wipe never touches game-owned
+			// dynamic children on the interface root. We compare the parent by id, NOT by instance:
+			// the ancestor walk hands back a fresh root wrapper on dialogue redraws, so an instance
+			// check would treat every redraw as a new root, spawn a new container, and orphan the
+			// old one (with its head still rendering) — the cause of heads stacking up.
+			if (headContainer != null && headContainer.getParentId() != parent.getId())
 			{
-				createdHead = parent.createChild(WidgetType.MODEL);
-				createdHead.setXPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
-				createdHead.setYPositionMode(WidgetPositionMode.ABSOLUTE_TOP);
+				// Genuine root change (e.g. fixed/resizable display switch): retire the stale
+				// container first so its head can never linger.
+				retireContainer();
+			}
+			if (headContainer == null)
+			{
+				headContainer = parent.createChild(WidgetType.LAYER);
+				headContainer.setXPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
+				headContainer.setYPositionMode(WidgetPositionMode.ABSOLUTE_TOP);
+				headContainer.setOriginalX(0);
+				headContainer.setOriginalY(0);
+				createdHead = null;
 				builtModelType = Integer.MIN_VALUE;
 				builtModelId = Integer.MIN_VALUE;
-				appliedAnimation = Integer.MIN_VALUE;
+				builtAnimation = Integer.MIN_VALUE;
 			}
+
+			// Keep the container spanning the host so the model is never clipped and its coordinates
+			// share the host's canvas origin (this also tracks canvas resizes).
+			headContainer.setHidden(false);
+			headContainer.setOriginalWidth(parent.getWidth());
+			headContainer.setOriginalHeight(parent.getHeight());
+			headContainer.revalidate();
 
 			final Point hostLoc = parent.getCanvasLocation();
 			final int ox = hostLoc != null ? hostLoc.getX() : 0;
@@ -235,47 +263,68 @@ class DialogueWidgetController
 			final int hx = isPlayer ? (box.x + box.width) : (box.x - HEAD_W);
 			final int hy = box.y + ((box.height - HEAD_H) / 2);
 
-			createdHead.setHidden(false);
-			createdHead.setOriginalWidth(HEAD_W);
-			createdHead.setOriginalHeight(HEAD_H);
-			createdHead.setOriginalX(hx - ox);
-			createdHead.setOriginalY(hy - oy);
-			createdHead.setModelZoom(src.getModelZoom() > 0 ? src.getModelZoom() : 512);
-			createdHead.setRotationX(src.getRotationX());
-			createdHead.setRotationY(src.getRotationY());
-			createdHead.setRotationZ(src.getRotationZ());
-
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
 			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
 
-			if (modelType != builtModelType || modelId != builtModelId)
+			if (createdHead == null
+				|| modelType != builtModelType
+				|| modelId != builtModelId
+				|| animation != builtAnimation)
 			{
-				// New head: swap model, force animation off this frame (resets the frame counter).
+				// Head or animation changed: recreate the MODEL widget so it starts at modelFrame 0.
+				// This is what prevents the render thread from indexing a stale frame past the new
+				// sequence's length (the ArrayIndexOutOfBounds that crashed the client).
+				//
+				// Hide the outgoing head FIRST. There is no API to delete a single dynamic child, and
+				// deleteAllChildren() does not reliably clear our dynamically-created container (old
+				// heads were observed lingering), so hiding the previous head is what actually keeps a
+				// single head on screen. deleteAllChildren() is still called as best-effort cleanup.
+				if (createdHead != null)
+				{
+					try
+					{
+						createdHead.setHidden(true);
+					}
+					catch (Exception ignored)
+					{
+						// outgoing head already gone; nothing to hide
+					}
+				}
+				headContainer.deleteAllChildren();
+				createdHead = headContainer.createChild(WidgetType.MODEL);
+				createdHead.setXPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
+				createdHead.setYPositionMode(WidgetPositionMode.ABSOLUTE_TOP);
+				createdHead.setOriginalWidth(HEAD_W);
+				createdHead.setOriginalHeight(HEAD_H);
+				createdHead.setOriginalX(hx - ox);
+				createdHead.setOriginalY(hy - oy);
+				createdHead.setModelZoom(src.getModelZoom() > 0 ? src.getModelZoom() : 512);
+				createdHead.setRotationX(src.getRotationX());
+				createdHead.setRotationY(src.getRotationY());
+				createdHead.setRotationZ(src.getRotationZ());
 				createdHead.setModelType(modelType);
 				createdHead.setModelId(modelId);
-				createdHead.setAnimationId(NO_ANIM);
+				createdHead.setAnimationId(animation);
+				createdHead.revalidate();
+
 				builtModelType = modelType;
 				builtModelId = modelId;
-				appliedAnimation = NO_ANIM;
+				builtAnimation = animation;
 			}
-			else if (appliedAnimation != animation)
+			else
 			{
-				if (animation != NO_ANIM && appliedAnimation != NO_ANIM)
-				{
-					// Animation changed without a model change: drop to -1 this frame first so the
-					// next frame's -1 -> anim transition restarts the frame counter at 0.
-					createdHead.setAnimationId(NO_ANIM);
-					appliedAnimation = NO_ANIM;
-				}
-				else
-				{
-					createdHead.setAnimationId(animation);
-					appliedAnimation = animation;
-				}
+				// Same head and animation: only refresh geometry (the box can move via config
+				// offsets / canvas resize). None of these touch the frame counter.
+				createdHead.setHidden(false);
+				createdHead.setOriginalX(hx - ox);
+				createdHead.setOriginalY(hy - oy);
+				createdHead.setModelZoom(src.getModelZoom() > 0 ? src.getModelZoom() : 512);
+				createdHead.setRotationX(src.getRotationX());
+				createdHead.setRotationY(src.getRotationY());
+				createdHead.setRotationZ(src.getRotationZ());
+				createdHead.revalidate();
 			}
-
-			createdHead.revalidate();
 		}
 		catch (Exception e)
 		{
@@ -283,17 +332,42 @@ class DialogueWidgetController
 		}
 	}
 
-	/** Hide the single head and arm a fresh animation reset for the next line/conversation. */
-	private void hideHead()
+	/** Drop the container we're about to abandon (real root change), hiding+clearing it so no head lingers. */
+	private void retireContainer()
 	{
-		if (createdHead == null)
-		{
-			return;
-		}
 		try
 		{
-			createdHead.setHidden(true);
-			createdHead.setAnimationId(NO_ANIM);
+			if (createdHead != null)
+			{
+				createdHead.setHidden(true);
+			}
+			headContainer.deleteAllChildren();
+			headContainer.setHidden(true);
+		}
+		catch (Exception e)
+		{
+			log.debug("Failed to retire head container", e);
+		}
+		headContainer = null;
+		createdHead = null;
+		builtModelType = Integer.MIN_VALUE;
+		builtModelId = Integer.MIN_VALUE;
+		builtAnimation = Integer.MIN_VALUE;
+	}
+
+	/** Hide the head and arm a fresh recreation (clean frame counter) for the next line/conversation. */
+	private void hideHead()
+	{
+		try
+		{
+			if (createdHead != null)
+			{
+				createdHead.setHidden(true);
+			}
+			if (headContainer != null)
+			{
+				headContainer.setHidden(true);
+			}
 		}
 		catch (Exception e)
 		{
@@ -301,7 +375,7 @@ class DialogueWidgetController
 		}
 		builtModelType = Integer.MIN_VALUE;
 		builtModelId = Integer.MIN_VALUE;
-		appliedAnimation = Integer.MIN_VALUE;
+		builtAnimation = Integer.MIN_VALUE;
 	}
 
 	/** Walk to the top-level interface root, which spans the canvas and does not clip on-screen children. */
@@ -318,7 +392,22 @@ class DialogueWidgetController
 	/** Called on shutdown. */
 	void cleanup()
 	{
-		hideHead();
+		try
+		{
+			if (headContainer != null)
+			{
+				headContainer.deleteAllChildren();
+				headContainer.setHidden(true);
+			}
+		}
+		catch (Exception e)
+		{
+			log.debug("Failed to clean up head widgets", e);
+		}
+		headContainer = null;
 		createdHead = null;
+		builtModelType = Integer.MIN_VALUE;
+		builtModelId = Integer.MIN_VALUE;
+		builtAnimation = Integer.MIN_VALUE;
 	}
 }

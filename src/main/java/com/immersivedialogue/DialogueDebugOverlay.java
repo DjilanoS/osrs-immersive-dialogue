@@ -55,6 +55,13 @@ class DialogueDebugOverlay extends Overlay
 			lines.add("host children: dynamic=" + count(host.getDynamicChildren())
 				+ " models=" + countModels(host.getDynamicChildren()));
 		}
+		final Widget container = controller.getHeadContainer();
+		describe(lines, "contnr ", container);
+		if (container != null)
+		{
+			lines.add("container children: dynamic=" + count(container.getDynamicChildren())
+				+ " models=" + countModels(container.getDynamicChildren()));
+		}
 		describe(lines, "created", controller.getCreatedHead());
 
 		g.setFont(new Font("Monospaced", Font.PLAIN, 12));
