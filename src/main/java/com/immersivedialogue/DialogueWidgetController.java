@@ -45,9 +45,35 @@ class DialogueWidgetController
 		NONE, NPC, PLAYER, OPTIONS
 	}
 
+	/** A dialogue option line: its native child index ({@code subid}) and display text. */
+	static final class Option
+	{
+		final int subid;
+		final String text;
+
+		Option(int subid, String text)
+		{
+			this.subid = subid;
+			this.text = text;
+		}
+	}
+
+	/** A published click target for an option: its native child index and on-screen rectangle. */
+	static final class OptionHit
+	{
+		final int subid;
+		final Rectangle rect;
+
+		OptionHit(int subid, Rectangle rect)
+		{
+			this.subid = subid;
+			this.rect = rect;
+		}
+	}
+
 	// Approximate native dialogue size; used for the bottom-center backdrop box.
 	private static final int BOX_W = 506;
-	private static final int BOX_H = 129;
+	private static final int BOX_H = 155;
 	private static final int HEAD_W = 110;
 	private static final int HEAD_H = 140;
 	private static final int NO_ANIM = -1;
@@ -57,17 +83,29 @@ class DialogueWidgetController
 
 	/** Canvas bounds of the bottom-center box this frame, or {@code null} when no dialogue is open. */
 	@Getter
-	private Rectangle bounds;
+	private volatile Rectangle bounds;
 
 	// Extracted text content for the overlay to draw.
 	@Getter
-	private Kind kind = Kind.NONE;
+	private volatile Kind kind = Kind.NONE;
 	@Getter
 	private String speakerName;
 	@Getter
 	private String bodyText;
 	@Getter
-	private List<String> options = Collections.emptyList();
+	private List<Option> options = Collections.emptyList();
+
+	/** Canvas rectangle of the relocated head this frame (for click-blocking), or {@code null}. */
+	@Getter
+	private volatile Rectangle headBounds;
+	/** Whether the current speaker is the local player (selects which CONTINUE widget to use). */
+	@Getter
+	private volatile boolean playerSpeaker;
+	/** Per-option click targets published by the overlay each frame (empty unless options are shown). */
+	@Getter
+	private volatile List<OptionHit> optionHits = Collections.emptyList();
+	/** Native dialogue components we hid this frame, restored at the top of the next apply(). */
+	private final List<Integer> hiddenComponents = new ArrayList<>();
 
 	// Our head widgets / diagnostics (read by the debug overlay).
 	@Getter
@@ -93,15 +131,22 @@ class DialogueWidgetController
 	/** Re-applied every frame from {@code BeforeRender}. */
 	void apply()
 	{
+		// Un-hide whatever we hid last frame BEFORE detection, so our own hiding never confuses the
+		// open/closed check below (detection keys on the UNIVERSE container, which we never hide).
+		restoreNative();
+
 		bounds = null;
+		headBounds = null;
 		kind = Kind.NONE;
 		speakerName = null;
 		bodyText = null;
+		playerSpeaker = false;
 		options = Collections.emptyList();
 		headSource = null;
 
 		if (!config.relocate())
 		{
+			optionHits = Collections.emptyList();
 			hideHead();
 			return;
 		}
@@ -131,13 +176,17 @@ class DialogueWidgetController
 		{
 			isPlayer = false;
 			kind = Kind.OPTIONS;
+			// Read option text while the widgets are still in their natural state (before hideNative).
 			options = readOptions(client.getWidget(InterfaceID.Chatmenu.OPTIONS));
 		}
 		else
 		{
+			optionHits = Collections.emptyList();
 			hideHead();
 			return;
 		}
+
+		playerSpeaker = isPlayer;
 
 		final int cw = client.getCanvasWidth();
 		final int ch = client.getCanvasHeight();
@@ -145,14 +194,35 @@ class DialogueWidgetController
 		final int y = ch - BOX_H - config.bottomMargin();
 		bounds = new Rectangle(x, y, BOX_W, BOX_H);
 
+		// Options publish their own hit-rects from the overlay's render pass; plain dialogue has none,
+		// so clear any stale targets here.
+		if (kind != Kind.OPTIONS)
+		{
+			optionHits = Collections.emptyList();
+		}
+
 		if (headSource != null && headSource.getModelType() > 0)
 		{
+			final int hx = isPlayer ? (bounds.x + bounds.width) : (bounds.x - HEAD_W);
+			final int hy = bounds.y + ((bounds.height - HEAD_H) / 2);
+			headBounds = new Rectangle(hx, hy, HEAD_W, HEAD_H);
 			renderHead(headSource, isPlayer, bounds);
 		}
 		else
 		{
 			hideHead();
 		}
+
+		// Finally, hide the native chatbox dialogue we replace. Done last so every read above sees the
+		// widgets visible; re-applied each frame because the client's clientscripts re-show them on
+		// rebuild.
+		hideNative(kind, isPlayer);
+	}
+
+	/** Published by the overlay each frame: the clickable rectangle for each option line. */
+	void setOptionHits(List<OptionHit> hits)
+	{
+		optionHits = hits == null ? Collections.emptyList() : hits;
 	}
 
 	private static boolean visible(Widget w)
@@ -166,20 +236,31 @@ class DialogueWidgetController
 		return w == null ? null : clean(w.getText());
 	}
 
-	private List<String> readOptions(Widget optionsWidget)
+	/**
+	 * Reads the option lines, capturing each line's native child index ({@code getIndex()}) as its
+	 * {@code subid}. That subid is what {@link Widget#getChild(int)} and the menu use to resolve the
+	 * option, so handing it back as {@code param0} of a {@code WIDGET_CONTINUE} action selects exactly
+	 * the clicked option. Child {@code subid 0} is the "Select an Option" header.
+	 */
+	private List<Option> readOptions(Widget optionsWidget)
 	{
-		final List<String> out = new ArrayList<>();
+		final List<Option> out = new ArrayList<>();
 		if (optionsWidget == null)
 		{
 			return out;
 		}
-		collectOptionText(optionsWidget.getStaticChildren(), out);
-		collectOptionText(optionsWidget.getDynamicChildren(), out);
-		collectOptionText(optionsWidget.getChildren(), out);
+		// Options are dynamic children (the array getChild()/the menu index into); fall back to static
+		// children only if there are none, so the subids stay consistent with getChild().
+		Widget[] children = optionsWidget.getDynamicChildren();
+		if (children == null || children.length == 0)
+		{
+			children = optionsWidget.getStaticChildren();
+		}
+		collectOptionText(children, out);
 		return out;
 	}
 
-	private static void collectOptionText(Widget[] children, List<String> out)
+	private static void collectOptionText(Widget[] children, List<Option> out)
 	{
 		if (children == null)
 		{
@@ -192,9 +273,23 @@ class DialogueWidgetController
 				continue;
 			}
 			final String t = clean(c.getText());
-			if (t != null && !t.isEmpty() && !out.contains(t))
+			if (t == null || t.isEmpty())
 			{
-				out.add(t);
+				continue;
+			}
+			final int subid = c.getIndex();
+			boolean dup = false;
+			for (final Option o : out)
+			{
+				if (o.subid == subid)
+				{
+					dup = true;
+					break;
+				}
+			}
+			if (!dup)
+			{
+				out.add(new Option(subid, t));
 			}
 		}
 	}
@@ -210,6 +305,61 @@ class DialogueWidgetController
 		s = s.replaceAll("<[^>]+>", "");
 		s = s.replace(' ', ' ');
 		return s.trim();
+	}
+
+	/** Hide the native chatbox dialogue we replace (re-applied every frame; see {@link #apply()}). */
+	private void hideNative(Kind dialogueKind, boolean isPlayer)
+	{
+		switch (dialogueKind)
+		{
+			case NPC:
+				hide(InterfaceID.ChatLeft.CONTENT);
+				hide(InterfaceID.ChatLeft.NAME);
+				hide(InterfaceID.ChatLeft.TEXT);
+				hide(InterfaceID.ChatLeft.CONTINUE);
+				hide(InterfaceID.ChatLeft.HEAD);
+				break;
+			case PLAYER:
+				hide(InterfaceID.ChatRight.CONTENT);
+				hide(InterfaceID.ChatRight.NAME);
+				hide(InterfaceID.ChatRight.TEXT);
+				hide(InterfaceID.ChatRight.CONTINUE);
+				hide(InterfaceID.ChatRight.HEAD);
+				break;
+			case OPTIONS:
+				hide(InterfaceID.Chatmenu.OPTIONS);
+				break;
+			default:
+				break;
+		}
+	}
+
+	private void hide(int componentId)
+	{
+		final Widget w = client.getWidget(componentId);
+		if (w != null)
+		{
+			w.setHidden(true);
+			hiddenComponents.add(componentId);
+		}
+	}
+
+	/** Restore everything {@link #hideNative} hid, so the chatbox is never left blank. */
+	private void restoreNative()
+	{
+		if (hiddenComponents.isEmpty())
+		{
+			return;
+		}
+		for (final int id : hiddenComponents)
+		{
+			final Widget w = client.getWidget(id);
+			if (w != null)
+			{
+				w.setHidden(false);
+			}
+		}
+		hiddenComponents.clear();
 	}
 
 	private void renderHead(Widget src, boolean isPlayer, Rectangle box)
@@ -392,6 +542,7 @@ class DialogueWidgetController
 	/** Called on shutdown. */
 	void cleanup()
 	{
+		restoreNative();
 		try
 		{
 			if (headContainer != null)

@@ -78,7 +78,7 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	default Color backgroundColor()
 	{
-		return new Color(0, 0, 0, 190);
+		return new Color(60, 42, 28, 205);
 	}
 
 	@Range(min = 0, max = 64)
@@ -133,12 +133,26 @@ public interface ImmersiveDialogueConfig extends Config
 		return new Color(255, 200, 90);
 	}
 
+	@Range(min = 14, max = 28)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "titleFontSize",
+		name = "Title size",
+		description = "Font size of the speaker's name / title shown at the top of the dialogue box.",
+		section = appearanceSection,
+		position = 5
+	)
+	default int titleFontSize()
+	{
+		return 19;
+	}
+
 	@ConfigItem(
 		keyName = "animateHead",
 		name = "Animate head (experimental)",
 		description = "Play the talking head animation. EXPERIMENTAL: some NPC heads can crash the client when animated; leave off for a stable static head.",
 		section = appearanceSection,
-		position = 5,
+		position = 6,
 		warning = "Animating relocated chat-heads is experimental and can crash the game client for some NPCs. Enable at your own risk."
 	)
 	default boolean animateHead()
@@ -151,7 +165,7 @@ public interface ImmersiveDialogueConfig extends Config
 		name = "Debug overlay",
 		description = "Show diagnostic widget metrics (for troubleshooting only).",
 		section = appearanceSection,
-		position = 6
+		position = 7
 	)
 	default boolean debugOverlay()
 	{

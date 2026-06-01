@@ -3,9 +3,13 @@ package com.immersivedialogue;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.MenuAction;
 import net.runelite.api.events.BeforeRender;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -30,11 +34,21 @@ public class ImmersiveDialoguePlugin extends Plugin
 	@Inject
 	private DialogueWidgetController controller;
 
+	@Inject
+	private DialogueMouseListener mouseListener;
+
+	@Inject
+	private MouseManager mouseManager;
+
+	@Inject
+	private ImmersiveDialogueConfig config;
+
 	@Override
 	protected void startUp()
 	{
 		overlayManager.add(overlay);
 		overlayManager.add(debugOverlay);
+		mouseManager.registerMouseListener(mouseListener);
 		log.debug("Immersive Dialogue started");
 	}
 
@@ -43,6 +57,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 	{
 		overlayManager.remove(overlay);
 		overlayManager.remove(debugOverlay);
+		mouseManager.unregisterMouseListener(mouseListener);
 		controller.cleanup();
 		log.debug("Immersive Dialogue stopped");
 	}
@@ -53,6 +68,20 @@ public class ImmersiveDialoguePlugin extends Plugin
 		// Re-apply every frame: the client rebuilds the dialogue widgets via clientscripts, so a
 		// one-shot reposition would be undone. BeforeRender fires after those scripts have run.
 		controller.apply();
+	}
+
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event)
+	{
+		// Diagnostic (debug overlay only): logs the exact params of dialogue continue/option clicks so
+		// the menuAction parameters used by DialogueMouseListener can be confirmed against a real click.
+		if (config.debugOverlay() && event.getMenuAction() == MenuAction.WIDGET_CONTINUE)
+		{
+			final Widget w = event.getWidget();
+			log.debug("WIDGET_CONTINUE param0={} param1={} id={} option='{}' target='{}' widget(id={} index={})",
+				event.getParam0(), event.getParam1(), event.getId(), event.getMenuOption(),
+				event.getMenuTarget(), w != null ? w.getId() : -1, w != null ? w.getIndex() : -1);
+		}
 	}
 
 	@Provides

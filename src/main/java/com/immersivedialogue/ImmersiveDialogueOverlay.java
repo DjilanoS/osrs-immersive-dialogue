@@ -9,6 +9,8 @@ import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
+import net.runelite.api.Client;
+import net.runelite.api.Point;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -23,13 +25,16 @@ class ImmersiveDialogueOverlay extends Overlay
 {
 	private static final int INSET = 16;
 	private static final int LINE_GAP = 3;
+	private static final Color HOVER_COLOR = new Color(255, 255, 255, 45);
 
+	private final Client client;
 	private final DialogueWidgetController controller;
 	private final ImmersiveDialogueConfig config;
 
 	@Inject
-	ImmersiveDialogueOverlay(DialogueWidgetController controller, ImmersiveDialogueConfig config)
+	ImmersiveDialogueOverlay(Client client, DialogueWidgetController controller, ImmersiveDialogueConfig config)
 	{
+		this.client = client;
 		this.controller = controller;
 		this.config = config;
 		setPosition(OverlayPosition.DYNAMIC);
@@ -50,7 +55,7 @@ class ImmersiveDialogueOverlay extends Overlay
 		g.setColor(config.backgroundColor());
 		g.fillRoundRect(b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2), 18, 18);
 
-		final Font nameFont = FontManager.getRunescapeBoldFont();
+		final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) config.titleFontSize());
 		final Font bodyFont = FontManager.getRunescapeFont();
 		final Color nameColor = config.nameColor();
 		final Color textColor = config.textColor();
@@ -80,7 +85,7 @@ class ImmersiveDialogueOverlay extends Overlay
 		final String name = controller.getSpeakerName();
 		if (name != null && !name.isEmpty())
 		{
-			lines.add(new Line(name, nameFont, nameColor));
+			lines.add(new Line(name, nameFont, nameColor, -1));
 		}
 
 		final String body = controller.getBodyText();
@@ -89,46 +94,56 @@ class ImmersiveDialogueOverlay extends Overlay
 			final FontMetrics bfm = g.getFontMetrics(bodyFont);
 			for (final String wrapped : wrap(body, bfm, maxWidth))
 			{
-				lines.add(new Line(wrapped, bodyFont, textColor));
+				lines.add(new Line(wrapped, bodyFont, textColor, -1));
 			}
 		}
 
-		drawCenteredBlock(g, b, lines);
+		drawTextBlock(g, b, lines);
 	}
 
 	private void drawOptions(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
 		Color nameColor, Color textColor)
 	{
-		final List<String> options = controller.getOptions();
 		final List<Line> lines = new ArrayList<>();
-		for (int i = 0; i < options.size(); i++)
+		for (final DialogueWidgetController.Option option : controller.getOptions())
 		{
-			// The first entry is the "Select an Option" header.
-			final boolean header = i == 0;
-			lines.add(new Line(options.get(i), header ? nameFont : bodyFont, header ? nameColor : textColor));
+			// Child subid 0 is the "Select an Option" header: render it as the non-clickable title.
+			final boolean header = option.subid == 0;
+			lines.add(new Line(option.text, header ? nameFont : bodyFont,
+				header ? nameColor : textColor, header ? -1 : option.subid));
 		}
-		drawCenteredBlock(g, b, lines);
+		controller.setOptionHits(drawTextBlock(g, b, lines));
 	}
 
-	/** Vertically center a block of lines within the box and draw each horizontally centered. */
-	private void drawCenteredBlock(Graphics2D g, Rectangle b, List<Line> lines)
+	/**
+	 * Draws a block of lines top-aligned within the box, each horizontally centered. A line carrying a
+	 * non-negative subid is a clickable option: a full-width hit rectangle is recorded for it and the
+	 * line under the cursor gets a hover highlight. Returns the option hit targets (empty for plain text).
+	 */
+	private List<DialogueWidgetController.OptionHit> drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
 	{
+		final List<DialogueWidgetController.OptionHit> hits = new ArrayList<>();
 		if (lines.isEmpty())
 		{
-			return;
+			return hits;
 		}
 
-		int total = 0;
-		for (final Line line : lines)
-		{
-			total += g.getFontMetrics(line.font).getHeight() + LINE_GAP;
-		}
-		total -= LINE_GAP;
-
-		int y = b.y + ((b.height - total) / 2);
+		final Point mouse = client.getMouseCanvasPosition();
+		int y = b.y + INSET;
 		for (final Line line : lines)
 		{
 			final FontMetrics fm = g.getFontMetrics(line.font);
+			if (line.subid >= 0)
+			{
+				final Rectangle hit = new Rectangle(b.x, y - (LINE_GAP / 2), b.width, fm.getHeight() + LINE_GAP);
+				if (mouse != null && hit.contains(mouse.getX(), mouse.getY()))
+				{
+					g.setColor(HOVER_COLOR);
+					g.fillRect(hit.x, hit.y, hit.width, hit.height);
+				}
+				hits.add(new DialogueWidgetController.OptionHit(line.subid, hit));
+			}
+
 			y += fm.getAscent();
 			final int x = b.x + ((b.width - fm.stringWidth(line.text)) / 2);
 			g.setFont(line.font);
@@ -139,6 +154,7 @@ class ImmersiveDialogueOverlay extends Overlay
 			g.drawString(line.text, x, y);
 			y += fm.getDescent() + LINE_GAP;
 		}
+		return hits;
 	}
 
 	private static List<String> wrap(String text, FontMetrics fm, int maxWidth)
@@ -176,12 +192,15 @@ class ImmersiveDialogueOverlay extends Overlay
 		private final String text;
 		private final Font font;
 		private final Color color;
+		/** Native option child index for a clickable option line, or {@code -1} for plain text. */
+		private final int subid;
 
-		private Line(String text, Font font, Color color)
+		private Line(String text, Font font, Color color, int subid)
 		{
 			this.text = text;
 			this.font = font;
 			this.color = color;
+			this.subid = subid;
 		}
 	}
 }
