@@ -16,7 +16,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @Slf4j
 @PluginDescriptor(
 	name = "Immersive Dialogue",
-	description = "Relocates NPC/player dialogue into a translucent box at the bottom-center of the screen, keeping the live animated chat-head.",
+	description = "Relocates NPC/player dialogue into an immersive panel on your screen, keeping the live animated chat-head.",
 	tags = {"dialogue", "npc", "immersion", "chat", "cutscene", "chatbox"}
 )
 public class ImmersiveDialoguePlugin extends Plugin

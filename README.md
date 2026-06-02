@@ -1,77 +1,101 @@
 # Immersive Dialogue
 
-A RuneLite plugin that makes NPC ↔ player conversations more immersive — inspired by the
-"Immersion" addon for World of Warcraft.
+Make Old School RuneScape conversations feel like a real RPG. Immersive Dialogue
+lifts NPC and player dialogue out of the corner chatbox and into a new immersive
+panel — with the **live, fully animated chat-head right beside it**.
 
-Instead of leaving dialogue in the chatbox (stuck in the far corner on large monitors), the
-conversation is mirrored into a **translucent box at the bottom-center of the screen**, with the
-**live animated chat-head** rendered beside it. The native dialogue stays active underneath, so all
-interaction happens through the game's own input — see *Interaction* below.
+![Immersive Dialogue in action](docs/immersive-dialogue.jpg)
 
-## How it works
+## What it does
 
-Every frame (`BeforeRender`), the plugin reads the currently-open dialogue and draws its own
-replacement:
+On large monitors the native chatbox is marooned in the bottom-left corner, far
+from where the conversation is actually happening. Immersive Dialogue mirrors the
+active conversation into a centered panel that sits where a modern RPG would put
+it, and renders the speaker's animated head next to the text.
 
-- **NPC lines** → interface `CHAT_LEFT` (231), head on the left
-- **Player lines** → interface `CHAT_RIGHT` (217), head on the right
-- **"Select an Option"** → interface `CHATMENU` (219)
+## The difference: a chat-head that isn't cut off
 
-The speaker name, body text and options are read from the native widgets and re-drawn on a
-translucent backdrop (`OverlayLayer.UNDER_WIDGETS`) centered near the bottom of the screen. The
-chat-head is mirrored into a `MODEL` widget the plugin creates on the top-level interface root (the
-native head is clip-locked inside the chatbox and cannot be relocated).
+Look closely at the **native** OSRS chatbox and you'll notice the animated
+chat-head is **clipped by the chatbox frame** — the top of the head and the
+shoulders are sliced off at the panel edges. Immersive Dialogue re-renders that
+same live, animated head on its own surface, so for the first time you see the
+**whole** chat-head, uncropped.
 
-To avoid showing the dialogue twice, the plugin hides only the native **display** widgets it
-re-draws — the speaker name, body text and head. It deliberately leaves the **interactive** native
-widgets (the "continue" prompt and the option list) untouched so the game keeps handling input.
+| Native chatbox (head clipped at the frame) | Immersive Dialogue (head fully visible) |
+| :---: | :---: |
+| ![Native OSRS chatbox with the chat-head cut off](docs/original.jpg) | ![Immersive Dialogue with the full chat-head visible](docs/immersive-dialogue.jpg) |
+
+## Showcase
+
+![Immersive Dialogue showcase](docs/immersive-dialogue-showcase.gif)
+
+> Prefer the full-quality clip? [Watch the showcase video](docs/immersive-dialogue-showcase.mp4).
 
 ## Interaction
 
-All interaction is handled **natively by the game** — the plugin never synthesizes clicks, key
-presses or menu actions:
+**All interaction is native.** You drive the dialogue exactly as you always have:
 
-- **Continue** a conversation with the **spacebar** (the native "click here to continue" in the
-  chatbox also still works).
-- **Select an option** with the **number keys 1–5**. The relocated box numbers each option so it's
-  clear which key picks which.
+- **Esc** — close / exit the dialogue (RuneLite's native "Escape closes
+  interfaces" behavior).
+- **Spacebar** — continue to the next line.
+- **Number keys 1–5** — select an option. The relocated panel numbers each
+  option so it's obvious which key picks which.
 
-Clicks that land on the relocated box are swallowed so you don't accidentally click the game world
-behind it while reading.
+**Why can't I click options?** Routing a click into the conversation would mean
+*synthesizing a menu action*, which sends a packet to the game server. The Plugin
+Hub rules forbid injecting input and forbid menu entries that send actions to the
+server, so Immersive Dialogue deliberately does not do it. Clicks that land on
+the relocated panel are simply swallowed, so you don't accidentally click the 3D
+world behind it while reading.
 
-> **Note:** OSRS shows one speaker at a time (NPC → continue → you), never both heads at once, so
-> the layout shows the current speaker's head on its natural side per turn.
+## Customization
 
-## Configuration
+Every setting lives under **Immersive Dialogue** in the RuneLite config panel,
+grouped into four sections.
 
-- **Position** — bottom margin and horizontal offset of the box.
-- **Dialogue appearance** — backdrop color/opacity, padding, text/name color and size, title size,
-  border color/width, corner radius, and the Quest Helper highlight color.
-- **Avatar appearance** — optional colored panel behind the chat-head.
-- **Transitions** — fade the box in/out, with a configurable duration.
+<img src="docs/immersive-dialogue-options.jpg" alt="Immersive Dialogue configuration panel" width="260">
 
-If Quest Helper is installed, the option it marks as correct is highlighted in the relocated box
-(in a legible color of your choice); Quest Helper's own color is only used to detect which option
-to highlight.
+### Position
+| Setting | What it does | Default |
+| --- | --- | --- |
+| **Bottom margin** | Distance of the panel from the bottom edge of the screen (0–800 px). | 24 |
+| **Horizontal offset** | Shift the panel left (negative) or right (positive) from center (-960–960 px). | 0 |
 
-## Building & running (development)
+### Dialogue appearance
+| Setting | What it does | Default |
+| --- | --- | --- |
+| **Backdrop color** | Color and opacity of the translucent panel. | dark brown, translucent |
+| **Backdrop padding** | Padding around the text inside the panel (0–64 px). | 12 |
+| **Text color** | Body text and option color. | white |
+| **Text size** | Body / option font size (12–28 px). | 16 |
+| **Name color** | Speaker name color. | gold |
+| **Title size** | Speaker-name / header font size (14–28 px). | 19 |
+| **Show border** | Draw a framed border around the panel. | on |
+| **Border color** | Color of the border. | brown |
+| **Border width** | Border thickness (1–8 px). | 2 |
+| **Corner radius** | Corner rounding; 0 = square corners (0–40 px). | 16 |
+| **Quest Helper highlight color** | Color used to highlight the option Quest Helper marks correct. | light blue |
 
-Requires JDK 11 (Eclipse Temurin) — the project targets Java 11.
+### Avatar appearance
+| Setting | What it does | Default |
+| --- | --- | --- |
+| **Avatar backdrop** | Draw a colored panel behind the chat-head. | off |
+| **Avatar color** | Color and opacity of that panel. | dark brown, translucent |
 
-```sh
-# compile
-./gradlew compileJava
+### Transitions
+| Setting | What it does | Default |
+| --- | --- | --- |
+| **Fade in / out** | Fade the panel in when it opens and out when it closes. | on |
+| **Fade duration** | How long the fade takes (250–1000 ms). | 150 |
 
-# launch the RuneLite dev client with this plugin loaded
-./gradlew run
-```
+## Quest Helper integration
 
-To log in to the development client, follow
-[Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts).
+If [Quest Helper](https://github.com/Zoinkwiz/quest-helper) is installed, the
+option it marks as the correct quest choice is highlighted in the relocated
+panel — in a legible color you choose under *Dialogue appearance*. Quest
+Helper's own highlight color is used only to detect which option to mark.
 
-> ⚠️ Never use automation/computer-use tools to interact with RuneScape — automating game input
-> violates Jagex's third-party client guidelines and can get your account banned. Only test by
-> playing manually.
+![Quest Helper option highlighted in Immersive Dialogue](docs/quest-helper-support.jpg)
 
 ## License
 
