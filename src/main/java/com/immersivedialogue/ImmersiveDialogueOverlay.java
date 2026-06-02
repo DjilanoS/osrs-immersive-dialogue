@@ -1,11 +1,15 @@
 package com.immersivedialogue;
 
+import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.Stroke;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
@@ -56,30 +60,104 @@ class ImmersiveDialogueOverlay extends Overlay
 			return null;
 		}
 
-		// Backdrop.
-		final int pad = config.backdropPadding();
-		g.setColor(config.backgroundColor());
-		g.fillRoundRect(b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2), 18, 18);
-
-		final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) config.titleFontSize());
-		final Font bodyFont = FontManager.getRunescapeFont();
-		final Color nameColor = config.nameColor();
-		final Color textColor = config.textColor();
-
-		switch (controller.getKind())
+		// Fade: scale every alpha the overlay draws by the controller's eased visibility. Done with a
+		// composite so the backdrop, border, avatar panel and text all fade together as one surface.
+		final float alpha = clamp01(controller.getDisplayAlpha());
+		if (alpha <= 0f)
 		{
-			case NPC:
-			case PLAYER:
-				drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
-				break;
-			case OPTIONS:
-				drawOptions(g, b, nameFont, bodyFont, nameColor, textColor);
-				break;
-			default:
-				break;
+			return null;
+		}
+
+		final Composite oldComposite = g.getComposite();
+		if (alpha < 1f)
+		{
+			g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+		}
+		try
+		{
+			final int radius = config.cornerRadius();
+
+			// Avatar backdrop, behind the chat-head. Drawn first so the main box sits over its inner edge.
+			// The head itself is a real MODEL widget rendered above this UNDER_WIDGETS overlay, so this
+			// panel lands behind it.
+			if (config.avatarBackground())
+			{
+				final Rectangle hb = controller.getHeadBounds();
+				if (hb != null)
+				{
+					final int hp = config.backdropPadding();
+					drawPanel(g, hb.x - hp, hb.y - hp, hb.width + (hp * 2), hb.height + (hp * 2),
+						radius, config.avatarBackgroundColor());
+				}
+			}
+
+			// Main backdrop.
+			final int pad = config.backdropPadding();
+			drawPanel(g, b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2),
+				radius, config.backgroundColor());
+
+			final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) config.titleFontSize());
+			final Font bodyFont = FontManager.getRunescapeFont().deriveFont((float) config.textSize());
+			final Color nameColor = config.nameColor();
+			final Color textColor = config.textColor();
+
+			switch (controller.getKind())
+			{
+				case NPC:
+				case PLAYER:
+					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
+					break;
+				case OPTIONS:
+					drawOptions(g, b, nameFont, bodyFont, nameColor, textColor);
+					break;
+				default:
+					break;
+			}
+		}
+		finally
+		{
+			g.setComposite(oldComposite);
 		}
 
 		return null;
+	}
+
+	/** Fills a backdrop panel (square when {@code radius == 0}, else rounded) and frames it if enabled. */
+	private void drawPanel(Graphics2D g, int x, int y, int w, int h, int radius, Color fill)
+	{
+		g.setColor(fill);
+		if (radius > 0)
+		{
+			g.fillRoundRect(x, y, w, h, radius, radius);
+		}
+		else
+		{
+			g.fillRect(x, y, w, h);
+		}
+
+		if (config.showBorder())
+		{
+			final int bw = config.borderWidth();
+			final int half = bw / 2;
+			final Stroke oldStroke = g.getStroke();
+			g.setStroke(new BasicStroke(bw));
+			g.setColor(config.borderColor());
+			// Inset the stroke by half its width so the frame stays within the filled panel.
+			if (radius > 0)
+			{
+				g.drawRoundRect(x + half, y + half, w - bw, h - bw, radius, radius);
+			}
+			else
+			{
+				g.drawRect(x + half, y + half, w - bw, h - bw);
+			}
+			g.setStroke(oldStroke);
+		}
+	}
+
+	private static float clamp01(float v)
+	{
+		return v < 0f ? 0f : (v > 1f ? 1f : v);
 	}
 
 	private void drawConversation(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,

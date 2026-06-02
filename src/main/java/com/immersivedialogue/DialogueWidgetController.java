@@ -76,11 +76,17 @@ class DialogueWidgetController
 	private static final int BOX_H = 155;
 	private static final int HEAD_W = 110;
 	private static final int HEAD_H = 140;
+	// Gap between the avatar and the box: the NPC avatar sits this far left of the box, the player
+	// avatar this far right of it, so neither touches the dialogue box edge.
+	private static final int HEAD_GAP = 6;
 	private static final int NO_ANIM = -1;
+	/** Below this the fade-out is treated as complete and the dialogue is fully cleared. */
+	private static final float ALPHA_EPSILON = 0.01f;
 
-	// Adaptive OPTIONS box sizing. EST_OPTION_TEXT_H over-estimates the runescape body line height so the
-	// box always covers the option rows the overlay draws (their click rects must stay inside it).
-	private static final int EST_OPTION_TEXT_H = 18;
+	// Adaptive OPTIONS box sizing. The per-row text-height allowance is the configured text size plus this
+	// buffer, over-estimating the runescape body line height so the box always covers the option rows the
+	// overlay draws (their click rects must stay inside it).
+	private static final int OPTION_TEXT_BUFFER = 4;
 	private static final int OPTIONS_MAX_H = 280;
 
 	private final Client client;
@@ -126,6 +132,12 @@ class DialogueWidgetController
 	private int builtModelId = Integer.MIN_VALUE;
 	private int builtAnimation = Integer.MIN_VALUE;
 
+	/** Eased 0..1 visibility the overlay multiplies into its alpha, and the head mirrors as opacity. */
+	@Getter
+	private volatile float displayAlpha = 0f;
+	/** Wall-clock of the previous frame, used to advance the fade independent of frame rate. */
+	private long lastFrameMs = 0L;
+
 	@Inject
 	DialogueWidgetController(Client client, ImmersiveDialogueConfig config)
 	{
@@ -140,58 +152,77 @@ class DialogueWidgetController
 		// open/closed check below (detection keys on the UNIVERSE container, which we never hide).
 		restoreNative();
 
+		final long now = System.currentTimeMillis();
+		final float dt = lastFrameMs == 0L ? 0f : Math.max(0L, now - lastFrameMs) / 1000f;
+		lastFrameMs = now;
+
+		// Detect the currently-open dialogue WITHOUT touching the published fields yet: when the
+		// dialogue closes we keep drawing the previous content while the fade-out runs, so the box
+		// has something to fade rather than vanishing instantly.
+		Kind detected = Kind.NONE;
+		boolean isPlayer = false;
+		if (config.relocate())
+		{
+			if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
+			{
+				detected = Kind.NPC;
+			}
+			else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
+			{
+				detected = Kind.PLAYER;
+				isPlayer = true;
+			}
+			else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
+			{
+				detected = Kind.OPTIONS;
+			}
+		}
+		final boolean open = detected != Kind.NONE;
+
+		updateAlpha(open, dt);
+
+		if (!open)
+		{
+			// Still fading out: retain last frame's content + head (only nudge the head's opacity).
+			if (fadeActive() && displayAlpha > ALPHA_EPSILON)
+			{
+				applyHeadOpacity();
+				return;
+			}
+			// Fully closed (or fade disabled): clear everything and hide the head.
+			clearDialogue();
+			return;
+		}
+
+		// A dialogue is open: (re)populate everything fresh this frame.
 		bounds = null;
 		headBounds = null;
-		kind = Kind.NONE;
 		speakerName = null;
 		bodyText = null;
-		playerSpeaker = false;
 		options = Collections.emptyList();
 		headSource = null;
-
-		if (!config.relocate())
-		{
-			optionHits = Collections.emptyList();
-			hideHead();
-			return;
-		}
-
-		final Widget npc = client.getWidget(InterfaceID.ChatLeft.UNIVERSE);
-		final Widget player = client.getWidget(InterfaceID.ChatRight.UNIVERSE);
-		final Widget menu = client.getWidget(InterfaceID.Chatmenu.UNIVERSE);
-
-		final boolean isPlayer;
-		if (visible(npc))
-		{
-			isPlayer = false;
-			kind = Kind.NPC;
-			headSource = client.getWidget(InterfaceID.ChatLeft.HEAD);
-			speakerName = text(InterfaceID.ChatLeft.NAME);
-			bodyText = text(InterfaceID.ChatLeft.TEXT);
-		}
-		else if (visible(player))
-		{
-			isPlayer = true;
-			kind = Kind.PLAYER;
-			headSource = client.getWidget(InterfaceID.ChatRight.HEAD);
-			speakerName = text(InterfaceID.ChatRight.NAME);
-			bodyText = text(InterfaceID.ChatRight.TEXT);
-		}
-		else if (visible(menu))
-		{
-			isPlayer = false;
-			kind = Kind.OPTIONS;
-			// Read option text while the widgets are still in their natural state (before hideNative).
-			options = readOptions(client.getWidget(InterfaceID.Chatmenu.OPTIONS));
-		}
-		else
-		{
-			optionHits = Collections.emptyList();
-			hideHead();
-			return;
-		}
-
+		kind = detected;
 		playerSpeaker = isPlayer;
+
+		switch (detected)
+		{
+			case NPC:
+				headSource = client.getWidget(InterfaceID.ChatLeft.HEAD);
+				speakerName = text(InterfaceID.ChatLeft.NAME);
+				bodyText = text(InterfaceID.ChatLeft.TEXT);
+				break;
+			case PLAYER:
+				headSource = client.getWidget(InterfaceID.ChatRight.HEAD);
+				speakerName = text(InterfaceID.ChatRight.NAME);
+				bodyText = text(InterfaceID.ChatRight.TEXT);
+				break;
+			case OPTIONS:
+				// Read option text while the widgets are still in their natural state (before hideNative).
+				options = readOptions(client.getWidget(InterfaceID.Chatmenu.OPTIONS));
+				break;
+			default:
+				break;
+		}
 
 		final int cw = client.getCanvasWidth();
 		final int ch = client.getCanvasHeight();
@@ -210,7 +241,7 @@ class DialogueWidgetController
 
 		if (headSource != null && headSource.getModelType() > 0)
 		{
-			final int hx = isPlayer ? (bounds.x + bounds.width) : (bounds.x - HEAD_W);
+			final int hx = isPlayer ? (bounds.x + bounds.width + HEAD_GAP) : (bounds.x - HEAD_W - HEAD_GAP);
 			final int hy = bounds.y + ((bounds.height - HEAD_H) / 2);
 			headBounds = new Rectangle(hx, hy, HEAD_W, HEAD_H);
 			renderHead(headSource, isPlayer, bounds);
@@ -220,10 +251,78 @@ class DialogueWidgetController
 			hideHead();
 		}
 
+		applyHeadOpacity();
+
 		// Finally, hide the native chatbox dialogue we replace. Done last so every read above sees the
 		// widgets visible; re-applied each frame because the client's clientscripts re-show them on
 		// rebuild.
 		hideNative(kind, isPlayer);
+	}
+
+	/** True when the fade feature is on and has a non-zero duration (otherwise transitions are instant). */
+	private boolean fadeActive()
+	{
+		return config.fade() && config.fadeDuration() > 0;
+	}
+
+	/** Eases {@link #displayAlpha} toward 1 (dialogue open) or 0 (closed) at the configured rate. */
+	private void updateAlpha(boolean open, float dt)
+	{
+		final float target = open ? 1f : 0f;
+		if (!fadeActive())
+		{
+			displayAlpha = target;
+			return;
+		}
+		final float step = dt / (config.fadeDuration() / 1000f);
+		if (displayAlpha < target)
+		{
+			displayAlpha = Math.min(target, displayAlpha + step);
+		}
+		else if (displayAlpha > target)
+		{
+			displayAlpha = Math.max(target, displayAlpha - step);
+		}
+	}
+
+	/**
+	 * Mirrors {@link #displayAlpha} onto the relocated head as widget opacity so it fades with the box.
+	 * Best-effort: the client may ignore opacity for {@code MODEL} widgets, in which case the head simply
+	 * pops while the rest of the box fades. Never allowed to break the frame.
+	 */
+	private void applyHeadOpacity()
+	{
+		final Widget head = createdHead;
+		if (head == null)
+		{
+			return;
+		}
+		final int opacity = fadeActive()
+			? Math.max(0, Math.min(255, Math.round((1f - displayAlpha) * 255f)))
+			: 0;
+		try
+		{
+			head.setOpacity(opacity);
+		}
+		catch (Exception ignored)
+		{
+			// opacity is a cosmetic best-effort; a failure here must not stop the dialogue from drawing
+		}
+	}
+
+	/** Clears all published dialogue state and hides the head (the dialogue is gone / fully faded out). */
+	private void clearDialogue()
+	{
+		bounds = null;
+		headBounds = null;
+		kind = Kind.NONE;
+		speakerName = null;
+		bodyText = null;
+		playerSpeaker = false;
+		options = Collections.emptyList();
+		optionHits = Collections.emptyList();
+		headSource = null;
+		hideHead();
 	}
 
 	/** Published by the overlay each frame: the clickable rectangle for each option line. */
@@ -250,7 +349,7 @@ class DialogueWidgetController
 			}
 			else
 			{
-				h += EST_OPTION_TEXT_H + (ImmersiveDialogueOverlay.OPTION_PAD * 2) + ImmersiveDialogueOverlay.OPTION_GAP;
+				h += (config.textSize() + OPTION_TEXT_BUFFER) + (ImmersiveDialogueOverlay.OPTION_PAD * 2) + ImmersiveDialogueOverlay.OPTION_GAP;
 			}
 		}
 		return Math.min(h, OPTIONS_MAX_H);
@@ -458,7 +557,7 @@ class DialogueWidgetController
 			final Point hostLoc = parent.getCanvasLocation();
 			final int ox = hostLoc != null ? hostLoc.getX() : 0;
 			final int oy = hostLoc != null ? hostLoc.getY() : 0;
-			final int hx = isPlayer ? (box.x + box.width) : (box.x - HEAD_W);
+			final int hx = isPlayer ? (box.x + box.width + HEAD_GAP) : (box.x - HEAD_W - HEAD_GAP);
 			final int hy = box.y + ((box.height - HEAD_H) / 2);
 
 			final int modelType = src.getModelType();
@@ -608,5 +707,7 @@ class DialogueWidgetController
 		builtModelType = Integer.MIN_VALUE;
 		builtModelId = Integer.MIN_VALUE;
 		builtAnimation = Integer.MIN_VALUE;
+		displayAlpha = 0f;
+		lastFrameMs = 0L;
 	}
 }
