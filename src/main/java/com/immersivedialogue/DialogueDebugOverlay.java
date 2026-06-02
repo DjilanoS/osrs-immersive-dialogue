@@ -9,6 +9,8 @@ import java.util.List;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -44,8 +46,7 @@ class DialogueDebugOverlay extends Overlay
 		}
 
 		final List<String> lines = new ArrayList<>();
-		lines.add("ImmersiveDialogue | relocate=" + config.relocate()
-			+ " canvas=" + client.getCanvasWidth() + "x" + client.getCanvasHeight());
+		lines.add("ImmersiveDialogue | canvas=" + client.getCanvasWidth() + "x" + client.getCanvasHeight());
 
 		describe(lines, "headSrc", controller.getHeadSource());
 		final Widget host = controller.getHost();
@@ -63,6 +64,8 @@ class DialogueDebugOverlay extends Overlay
 				+ " models=" + countModels(container.getDynamicChildren()));
 		}
 		describe(lines, "created", controller.getCreatedHead());
+
+		dumpChat(lines);
 
 		g.setFont(new Font("Monospaced", Font.PLAIN, 12));
 		final int x = 8;
@@ -99,6 +102,49 @@ class DialogueDebugOverlay extends Overlay
 			}
 		}
 		return n;
+	}
+
+	/**
+	 * Chatbox-state diagnostics for the "hide native dialogue panel" feature: which chat widgets are
+	 * hidden while a dialogue is open, whether chat text is still present behind it, and the chatbox
+	 * transparency mode (read-only — we never write that player-controlled varbit).
+	 */
+	private void dumpChat(List<String> lines)
+	{
+		chatState(lines, "CHAT_BACKGROUND", InterfaceID.Chatbox.CHAT_BACKGROUND, false);
+		chatState(lines, "CHATDISPLAY    ", InterfaceID.Chatbox.CHATDISPLAY, false);
+		chatState(lines, "SCROLLAREA     ", InterfaceID.Chatbox.SCROLLAREA, false);
+		chatState(lines, "MES_LAYER_HIDE ", InterfaceID.Chatbox.MES_LAYER_HIDE, false);
+		chatState(lines, "LINE0          ", InterfaceID.Chatbox.LINE0, true);
+		chatState(lines, "LINE3          ", InterfaceID.Chatbox.LINE3, true);
+		lines.add("varbit CHATBOX_TRANSPARENCY=" + client.getVarbitValue(VarbitID.CHATBOX_TRANSPARENCY));
+	}
+
+	private void chatState(List<String> lines, String label, int componentId, boolean withText)
+	{
+		final Widget w = client.getWidget(componentId);
+		if (w == null)
+		{
+			lines.add("chat " + label + " = null");
+			return;
+		}
+		final StringBuilder sb = new StringBuilder("chat ").append(label)
+			.append(" hidden=").append(w.isHidden())
+			.append(" self=").append(w.isSelfHidden());
+		if (withText)
+		{
+			String t = w.getText();
+			if (t == null)
+			{
+				t = "";
+			}
+			if (t.length() > 40)
+			{
+				t = t.substring(0, 40);
+			}
+			sb.append(" text='").append(t).append('\'');
+		}
+		lines.add(sb.toString());
 	}
 
 	private static void describe(List<String> lines, String label, Widget w)

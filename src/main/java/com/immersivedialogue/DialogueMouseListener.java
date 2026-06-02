@@ -32,16 +32,14 @@ class DialogueMouseListener extends MouseAdapter
 	private final Client client;
 	private final ClientThread clientThread;
 	private final DialogueWidgetController controller;
-	private final ImmersiveDialogueConfig config;
 
 	@Inject
 	DialogueMouseListener(Client client, ClientThread clientThread,
-		DialogueWidgetController controller, ImmersiveDialogueConfig config)
+		DialogueWidgetController controller)
 	{
 		this.client = client;
 		this.clientThread = clientThread;
 		this.controller = controller;
-		this.config = config;
 	}
 
 	@Override
@@ -68,10 +66,6 @@ class DialogueMouseListener extends MouseAdapter
 	 */
 	private MouseEvent handle(MouseEvent event, boolean select)
 	{
-		if (!config.relocate())
-		{
-			return event;
-		}
 		// Let the middle button (camera drag) through.
 		if (SwingUtilities.isMiddleMouseButton(event))
 		{

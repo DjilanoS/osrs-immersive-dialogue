@@ -212,8 +212,10 @@ class ImmersiveDialogueOverlay extends Overlay
 		{
 			// Child subid 0 is the "Select an Option" header: render it as the non-clickable title.
 			final boolean header = option.subid == 0;
-			lines.add(new Line(option.text, header ? nameFont : bodyFont,
-				header ? nameColor : textColor, header ? -1 : option.subid));
+			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
+			final Color color = option.highlighted ? config.questHelperHighlightColor()
+				: (header ? nameColor : textColor);
+			lines.add(new Line(option.text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
 		controller.setOptionHits(drawTextBlock(g, b, lines));
 	}

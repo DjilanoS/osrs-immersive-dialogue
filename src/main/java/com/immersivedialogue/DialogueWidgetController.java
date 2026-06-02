@@ -1,5 +1,6 @@
 package com.immersivedialogue;
 
+import java.awt.Color;
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +16,7 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetPositionMode;
 import net.runelite.api.widgets.WidgetType;
+import net.runelite.client.config.ConfigManager;
 
 /**
  * Detects the open dialogue, computes the bottom-center box geometry, extracts the text to draw,
@@ -46,16 +48,21 @@ class DialogueWidgetController
 		NONE, NPC, PLAYER, OPTIONS
 	}
 
-	/** A dialogue option line: its native child index ({@code subid}) and display text. */
+	/**
+	 * A dialogue option line: its native child index ({@code subid}), display text, and whether Quest
+	 * Helper marked it as the correct choice (mirrored as a highlight in our box).
+	 */
 	static final class Option
 	{
 		final int subid;
 		final String text;
+		final boolean highlighted;
 
-		Option(int subid, String text)
+		Option(int subid, String text, boolean highlighted)
 		{
 			this.subid = subid;
 			this.text = text;
+			this.highlighted = highlighted;
 		}
 	}
 
@@ -92,6 +99,7 @@ class DialogueWidgetController
 
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
+	private final ConfigManager configManager;
 
 	/** Canvas bounds of the bottom-center box this frame, or {@code null} when no dialogue is open. */
 	@Getter
@@ -140,10 +148,11 @@ class DialogueWidgetController
 	private long lastFrameMs = 0L;
 
 	@Inject
-	DialogueWidgetController(Client client, ImmersiveDialogueConfig config)
+	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager)
 	{
 		this.client = client;
 		this.config = config;
+		this.configManager = configManager;
 	}
 
 	/** Re-applied every frame from {@code BeforeRender}. */
@@ -162,21 +171,18 @@ class DialogueWidgetController
 		// has something to fade rather than vanishing instantly.
 		Kind detected = Kind.NONE;
 		boolean isPlayer = false;
-		if (config.relocate())
+		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
 		{
-			if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
-			{
-				detected = Kind.NPC;
-			}
-			else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
-			{
-				detected = Kind.PLAYER;
-				isPlayer = true;
-			}
-			else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
-			{
-				detected = Kind.OPTIONS;
-			}
+			detected = Kind.NPC;
+		}
+		else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
+		{
+			detected = Kind.PLAYER;
+			isPlayer = true;
+		}
+		else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
+		{
+			detected = Kind.OPTIONS;
 		}
 		final boolean open = detected != Kind.NONE;
 
@@ -407,6 +413,24 @@ class DialogueWidgetController
 	}
 
 	/**
+	 * The color Quest Helper would use to highlight the correct option, or {@code null} when there is
+	 * nothing to mirror (QH highlighting off, or QH absent). Quest Helper stores these in its own config
+	 * group ("questhelper"); {@link ConfigManager#getConfiguration} returns {@code null} for any value the
+	 * user never changed, so we fall back to QH's own defaults (highlight on, color blue). When QH is not
+	 * installed no native option ever carries this color, so detection simply matches none.
+	 */
+	private Color questHelperColor()
+	{
+		final Boolean show = configManager.getConfiguration("questhelper", "showTextHighlight", Boolean.class);
+		if (Boolean.FALSE.equals(show))
+		{
+			return null;
+		}
+		final Color c = configManager.getConfiguration("questhelper", "textHighlightColor", Color.class);
+		return c != null ? c : Color.BLUE;
+	}
+
+	/**
 	 * Reads the option lines, capturing each line's native child index ({@code getIndex()}) as its
 	 * {@code subid}. That subid is what {@link Widget#getChild(int)} and the menu use to resolve the
 	 * option, so handing it back as {@code param0} of a {@code WIDGET_CONTINUE} action selects exactly
@@ -426,11 +450,11 @@ class DialogueWidgetController
 		{
 			children = optionsWidget.getStaticChildren();
 		}
-		collectOptionText(children, out);
+		collectOptionText(children, out, questHelperColor());
 		return out;
 	}
 
-	private static void collectOptionText(Widget[] children, List<Option> out)
+	private static void collectOptionText(Widget[] children, List<Option> out, Color questHelperColor)
 	{
 		if (children == null)
 		{
@@ -442,7 +466,7 @@ class DialogueWidgetController
 			{
 				continue;
 			}
-			final String t = clean(c.getText());
+			String t = clean(c.getText());
 			if (t == null || t.isEmpty())
 			{
 				continue;
@@ -457,10 +481,21 @@ class DialogueWidgetController
 					break;
 				}
 			}
-			if (!dup)
+			if (dup)
 			{
-				out.add(new Option(subid, t));
+				continue;
 			}
+			// Quest Helper recolors the correct option's native text (subid 0 is the "Select an Option"
+			// header, never a choice). The color survives our setHidden, so reading it here mirrors the
+			// highlight into our box. Compare masked to 24 bits: getTextColor() carries no alpha byte.
+			final boolean highlighted = questHelperColor != null && subid != 0
+				&& (c.getTextColor() & 0xFFFFFF) == (questHelperColor.getRGB() & 0xFFFFFF);
+			if (highlighted)
+			{
+				// Quest Helper prepends "[N] " numbering to the highlighted option only; drop it.
+				t = t.replaceFirst("^\\s*\\[\\d+\\]\\s*", "");
+			}
+			out.add(new Option(subid, t, highlighted));
 		}
 	}
 
@@ -480,6 +515,15 @@ class DialogueWidgetController
 	/** Hide the native chatbox dialogue we replace (re-applied every frame; see {@link #apply()}). */
 	private void hideNative(Kind dialogueKind, boolean isPlayer)
 	{
+		// Keep RuneScape's beige dialogue background (Chatbox.CHAT_BACKGROUND, which the game shows when a
+		// dialogue opens) and force the native chat display back on OVER it — the game hides the chat
+		// whenever a dialogue opens — so the chatbox shows the player's normal chat on the beige (the native
+		// opaque-chatbox look) instead of an empty box. The beige is the chatbox's background layer and the
+		// chat lines draw after it, so the chat naturally sits in front; no z-reordering is needed. Re-asserted
+		// every frame; the game's own message-layer-close script re-hides the chat once the dialogue ends, so
+		// no restore is needed.
+		show(InterfaceID.Chatbox.CHATDISPLAY);
+		show(InterfaceID.Chatbox.SCROLLAREA);
 		switch (dialogueKind)
 		{
 			case NPC:
@@ -514,6 +558,21 @@ class DialogueWidgetController
 		}
 	}
 
+	/**
+	 * Force a native component visible (the inverse of {@link #hide}). Used to re-show the chat display the
+	 * game hides during dialogue. Deliberately NOT tracked for restore: its natural post-dialogue state is
+	 * already visible and the game re-shows it on dialogue close, so re-asserting it each open frame and
+	 * leaving it untouched otherwise is self-correcting.
+	 */
+	private void show(int componentId)
+	{
+		final Widget w = client.getWidget(componentId);
+		if (w != null)
+		{
+			w.setHidden(false);
+		}
+	}
+
 	/** Restore everything {@link #hideNative} hid, so the chatbox is never left blank. */
 	private void restoreNative()
 	{
@@ -530,6 +589,42 @@ class DialogueWidgetController
 			}
 		}
 		hiddenComponents.clear();
+	}
+
+	/**
+	 * Re-asserts our native-dialogue hiding (and keeps the chat shown) for the dialogue currently open.
+	 * Subscribed to {@code WidgetLoaded} for the dialogue interfaces: when the game rebuilds the dialogue on
+	 * a NEW LINE it briefly re-shows the native dialogue (and re-hides the chat we force-show), which would
+	 * flash for one frame until the next {@code BeforeRender} — re-hiding it the instant the interface
+	 * reloads removes that flash. Only acts while a relocated dialogue is ALREADY active, so we never hide the
+	 * native dialogue before our replacement box exists on the first open. Cheap and idempotent; it does not
+	 * touch the fade, the head, or the published content (the following {@code apply()} refreshes those).
+	 */
+	void reassertNativeVisibility()
+	{
+		if (kind == Kind.NONE)
+		{
+			return;
+		}
+		Kind detected = Kind.NONE;
+		boolean isPlayer = false;
+		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
+		{
+			detected = Kind.NPC;
+		}
+		else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
+		{
+			detected = Kind.PLAYER;
+			isPlayer = true;
+		}
+		else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
+		{
+			detected = Kind.OPTIONS;
+		}
+		if (detected != Kind.NONE)
+		{
+			hideNative(detected, isPlayer);
+		}
 	}
 
 	private void renderHead(Widget src, boolean isPlayer, Rectangle box)

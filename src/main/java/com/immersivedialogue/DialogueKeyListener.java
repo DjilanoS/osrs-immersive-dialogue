@@ -22,18 +22,15 @@ class DialogueKeyListener implements KeyListener
 {
 	private final ClientThread clientThread;
 	private final DialogueWidgetController controller;
-	private final ImmersiveDialogueConfig config;
 
 	/** Tracks the held state so OS key auto-repeat advances one line per press, like a single click. */
 	private boolean spaceDown;
 
 	@Inject
-	DialogueKeyListener(ClientThread clientThread, DialogueWidgetController controller,
-		ImmersiveDialogueConfig config)
+	DialogueKeyListener(ClientThread clientThread, DialogueWidgetController controller)
 	{
 		this.clientThread = clientThread;
 		this.controller = controller;
-		this.config = config;
 	}
 
 	@Override
@@ -88,7 +85,6 @@ class DialogueKeyListener implements KeyListener
 	private boolean handles()
 	{
 		final DialogueWidgetController.Kind kind = controller.getKind();
-		return config.relocate()
-			&& (kind == DialogueWidgetController.Kind.NPC || kind == DialogueWidgetController.Kind.PLAYER);
+		return kind == DialogueWidgetController.Kind.NPC || kind == DialogueWidgetController.Kind.PLAYER;
 	}
 }

@@ -75,18 +75,6 @@ public interface ImmersiveDialogueConfig extends Config
 		return false;
 	}
 
-	@ConfigItem(
-		keyName = "relocate",
-		name = "Relocate dialogue",
-		description = "Move NPC/player dialogue to a box at the bottom-center of the screen. Turn off to keep the vanilla chatbox dialogue.",
-		section = positionSection,
-		position = 0
-	)
-	default boolean relocate()
-	{
-		return true;
-	}
-
 	@Range(min = 0, max = 800)
 	@Units(Units.PIXELS)
 	@ConfigItem(
@@ -94,7 +82,7 @@ public interface ImmersiveDialogueConfig extends Config
 		name = "Bottom margin",
 		description = "Distance of the dialogue box from the bottom edge of the screen.",
 		section = positionSection,
-		position = 1
+		position = 2
 	)
 	default int bottomMargin()
 	{
@@ -108,7 +96,7 @@ public interface ImmersiveDialogueConfig extends Config
 		name = "Horizontal offset",
 		description = "Shift the dialogue box left (negative) or right (positive) from the horizontal center.",
 		section = positionSection,
-		position = 2
+		position = 3
 	)
 	default int horizontalOffset()
 	{
@@ -259,6 +247,19 @@ public interface ImmersiveDialogueConfig extends Config
 	default int cornerRadius()
 	{
 		return 16;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "questHelperHighlightColor",
+		name = "Quest Helper highlight color",
+		description = "Color used to highlight the option Quest Helper marks as correct. Kept legible on the dark backdrop; Quest Helper's own color is only used to detect which option to highlight. Has no effect without Quest Helper installed.",
+		section = appearanceSection,
+		position = 11
+	)
+	default Color questHelperHighlightColor()
+	{
+		return new Color(120, 180, 255);
 	}
 
 	// --- Avatar appearance -----------------------------------------------------

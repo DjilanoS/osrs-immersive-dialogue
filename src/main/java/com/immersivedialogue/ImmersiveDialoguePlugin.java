@@ -10,6 +10,8 @@ import net.runelite.api.Point;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.PostMenuSort;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -87,6 +89,19 @@ public class ImmersiveDialoguePlugin extends Plugin
 	}
 
 	@Subscribe
+	public void onWidgetLoaded(WidgetLoaded event)
+	{
+		// When the game rebuilds a dialogue interface (e.g. advancing to a new line) it briefly re-shows the
+		// native dialogue and re-hides the chat; re-apply our hiding the instant the interface reloads so it
+		// does not flash for one frame before the next BeforeRender catches it.
+		final int group = event.getGroupId();
+		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU)
+		{
+			controller.reassertNativeVisibility();
+		}
+	}
+
+	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
 		// Diagnostic (debug overlay only): logs the exact params of dialogue continue/option clicks so
@@ -106,7 +121,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 		// Suppress the world hover menu/tooltip while the cursor is over the relocated box, so nothing in
 		// the 3D world (e.g. "Pickup Sweetcorn") shows through it. Consuming the click blocks the action;
 		// this blocks the hover text too. Skip when a right-click menu is already open.
-		if (!config.relocate() || client.isMenuOpen())
+		if (client.isMenuOpen())
 		{
 			return;
 		}
