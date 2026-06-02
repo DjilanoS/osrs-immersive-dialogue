@@ -1,3 +1,5 @@
+![Icon](icon.png) 
+
 # Immersive Dialogue
 
 Make Old School RuneScape conversations feel like a real RPG. Immersive Dialogue
