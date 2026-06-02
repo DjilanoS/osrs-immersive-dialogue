@@ -45,9 +45,7 @@ same live, animated head on its own surface, so for the first time you see the
 > Routing a click into the conversation would mean
 > *synthesizing a menu action*, which sends a packet to the game server. The Plugin
 > Hub rules forbid injecting input and forbid menu entries that send actions to the
-> server, so Immersive Dialogue deliberately does not do it. Clicks that land on
-> the relocated panel are simply swallowed, so you don't accidentally click the 3D
-> world behind it while reading.
+> server, so Immersive Dialogue deliberately does not do it.
 
 ## Customization
 
