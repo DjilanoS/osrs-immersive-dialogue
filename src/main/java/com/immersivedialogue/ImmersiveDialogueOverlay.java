@@ -1,14 +1,20 @@
 package com.immersivedialogue;
 
+import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.Stroke;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
+import net.runelite.api.Client;
+import net.runelite.api.Point;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -21,15 +27,23 @@ import net.runelite.client.ui.overlay.OverlayPosition;
  */
 class ImmersiveDialogueOverlay extends Overlay
 {
-	private static final int INSET = 16;
-	private static final int LINE_GAP = 3;
+	// Package-private: the controller reads these to size the adaptive options box (see optionsBoxHeight).
+	static final int INSET = 16;
+	static final int LINE_GAP = 3;
+	static final int OPTION_PAD = 5;
+	static final int OPTION_GAP = 6;
+	private static final String CONTINUE_TEXT = "Press Space to continue";
+	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
+	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
+	private final Client client;
 	private final DialogueWidgetController controller;
 	private final ImmersiveDialogueConfig config;
 
 	@Inject
-	ImmersiveDialogueOverlay(DialogueWidgetController controller, ImmersiveDialogueConfig config)
+	ImmersiveDialogueOverlay(Client client, DialogueWidgetController controller, ImmersiveDialogueConfig config)
 	{
+		this.client = client;
 		this.controller = controller;
 		this.config = config;
 		setPosition(OverlayPosition.DYNAMIC);
@@ -45,30 +59,104 @@ class ImmersiveDialogueOverlay extends Overlay
 			return null;
 		}
 
-		// Backdrop.
-		final int pad = config.backdropPadding();
-		g.setColor(config.backgroundColor());
-		g.fillRoundRect(b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2), 18, 18);
-
-		final Font nameFont = FontManager.getRunescapeBoldFont();
-		final Font bodyFont = FontManager.getRunescapeFont();
-		final Color nameColor = config.nameColor();
-		final Color textColor = config.textColor();
-
-		switch (controller.getKind())
+		// Fade: scale every alpha the overlay draws by the controller's eased visibility. Done with a
+		// composite so the backdrop, border, avatar panel and text all fade together as one surface.
+		final float alpha = clamp01(controller.getDisplayAlpha());
+		if (alpha <= 0f)
 		{
-			case NPC:
-			case PLAYER:
-				drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
-				break;
-			case OPTIONS:
-				drawOptions(g, b, nameFont, bodyFont, nameColor, textColor);
-				break;
-			default:
-				break;
+			return null;
+		}
+
+		final Composite oldComposite = g.getComposite();
+		if (alpha < 1f)
+		{
+			g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+		}
+		try
+		{
+			final int radius = config.cornerRadius();
+
+			// Avatar backdrop, behind the chat-head. Drawn first so the main box sits over its inner edge.
+			// The head itself is a real MODEL widget rendered above this UNDER_WIDGETS overlay, so this
+			// panel lands behind it.
+			if (config.avatarBackground())
+			{
+				final Rectangle hb = controller.getHeadBounds();
+				if (hb != null)
+				{
+					final int hp = config.backdropPadding();
+					drawPanel(g, hb.x - hp, hb.y - hp, hb.width + (hp * 2), hb.height + (hp * 2),
+						radius, config.avatarBackgroundColor());
+				}
+			}
+
+			// Main backdrop.
+			final int pad = config.backdropPadding();
+			drawPanel(g, b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2),
+				radius, config.backgroundColor());
+
+			final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) config.titleFontSize());
+			final Font bodyFont = FontManager.getRunescapeFont().deriveFont((float) config.textSize());
+			final Color nameColor = config.nameColor();
+			final Color textColor = config.textColor();
+
+			switch (controller.getKind())
+			{
+				case NPC:
+				case PLAYER:
+					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
+					break;
+				case OPTIONS:
+					drawOptions(g, b, nameFont, bodyFont, nameColor, textColor);
+					break;
+				default:
+					break;
+			}
+		}
+		finally
+		{
+			g.setComposite(oldComposite);
 		}
 
 		return null;
+	}
+
+	/** Fills a backdrop panel (square when {@code radius == 0}, else rounded) and frames it if enabled. */
+	private void drawPanel(Graphics2D g, int x, int y, int w, int h, int radius, Color fill)
+	{
+		g.setColor(fill);
+		if (radius > 0)
+		{
+			g.fillRoundRect(x, y, w, h, radius, radius);
+		}
+		else
+		{
+			g.fillRect(x, y, w, h);
+		}
+
+		if (config.showBorder())
+		{
+			final int bw = config.borderWidth();
+			final int half = bw / 2;
+			final Stroke oldStroke = g.getStroke();
+			g.setStroke(new BasicStroke(bw));
+			g.setColor(config.borderColor());
+			// Inset the stroke by half its width so the frame stays within the filled panel.
+			if (radius > 0)
+			{
+				g.drawRoundRect(x + half, y + half, w - bw, h - bw, radius, radius);
+			}
+			else
+			{
+				g.drawRect(x + half, y + half, w - bw, h - bw);
+			}
+			g.setStroke(oldStroke);
+		}
+	}
+
+	private static float clamp01(float v)
+	{
+		return v < 0f ? 0f : (v > 1f ? 1f : v);
 	}
 
 	private void drawConversation(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
@@ -80,7 +168,7 @@ class ImmersiveDialogueOverlay extends Overlay
 		final String name = controller.getSpeakerName();
 		if (name != null && !name.isEmpty())
 		{
-			lines.add(new Line(name, nameFont, nameColor));
+			lines.add(new Line(name, nameFont, nameColor, -1));
 		}
 
 		final String body = controller.getBodyText();
@@ -89,55 +177,104 @@ class ImmersiveDialogueOverlay extends Overlay
 			final FontMetrics bfm = g.getFontMetrics(bodyFont);
 			for (final String wrapped : wrap(body, bfm, maxWidth))
 			{
-				lines.add(new Line(wrapped, bodyFont, textColor));
+				lines.add(new Line(wrapped, bodyFont, textColor, -1));
 			}
 		}
 
-		drawCenteredBlock(g, b, lines);
+		drawTextBlock(g, b, lines);
+		// NPC/player dialogue advances on the spacebar; hint at that affordance.
+		drawBottomHint(g, b, bodyFont, CONTINUE_TEXT);
+	}
+
+	/**
+	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …"). Muted by default,
+	 * it brightens to full white while the cursor is over the dialogue box, drawing attention to the keys that
+	 * drive it.
+	 */
+	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text)
+	{
+		final FontMetrics fm = g.getFontMetrics(font);
+		final int x = b.x + ((b.width - fm.stringWidth(text)) / 2);
+		final int y = b.y + b.height - fm.getDescent() - (INSET / 2);
+
+		final Point mouse = client.getMouseCanvasPosition();
+		final boolean hover = mouse != null && b.contains(mouse.getX(), mouse.getY());
+
+		g.setFont(font);
+		g.setColor(Color.BLACK);
+		g.drawString(text, x + 1, y + 1);
+		g.setColor(hover ? HINT_HOVER_COLOR : HINT_COLOR);
+		g.drawString(text, x, y);
 	}
 
 	private void drawOptions(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
 		Color nameColor, Color textColor)
 	{
-		final List<String> options = controller.getOptions();
 		final List<Line> lines = new ArrayList<>();
-		for (int i = 0; i < options.size(); i++)
+		int number = 0;
+		for (final DialogueWidgetController.Option option : controller.getOptions())
 		{
-			// The first entry is the "Select an Option" header.
-			final boolean header = i == 0;
-			lines.add(new Line(options.get(i), header ? nameFont : bodyFont, header ? nameColor : textColor));
+			// Child subid 0 is the "Select an Option" header: render it as the title (no number key).
+			final boolean header = option.subid == 0;
+			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
+			final Color color = option.highlighted ? config.questHelperHighlightColor()
+				: (header ? nameColor : textColor);
+			// Prefix each real option with the [1]-[5] number key that selects it natively.
+			final String text = header ? option.text : "[" + (++number) + "] " + option.text;
+			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
-		drawCenteredBlock(g, b, lines);
+		drawTextBlock(g, b, lines);
+		if (number > 0)
+		{
+			final String hint = number == 1
+				? "Use key [1] to select an option"
+				: "Use keys [1] - [" + number + "] to select an option";
+			drawBottomHint(g, b, bodyFont, hint);
+		}
 	}
 
-	/** Vertically center a block of lines within the box and draw each horizontally centered. */
-	private void drawCenteredBlock(Graphics2D g, Rectangle b, List<Line> lines)
+	/**
+	 * Draws a block of lines top-aligned within the box, each horizontally centered. A line carrying a
+	 * non-negative subid is an option row, given comfortable padding so the numbered choices are easy to
+	 * read; selection itself is handled natively by the 1-5 keys, so no hit-testing is done here.
+	 */
+	private void drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
 	{
 		if (lines.isEmpty())
 		{
 			return;
 		}
 
-		int total = 0;
-		for (final Line line : lines)
-		{
-			total += g.getFontMetrics(line.font).getHeight() + LINE_GAP;
-		}
-		total -= LINE_GAP;
-
-		int y = b.y + ((b.height - total) / 2);
+		int y = b.y + INSET;
 		for (final Line line : lines)
 		{
 			final FontMetrics fm = g.getFontMetrics(line.font);
-			y += fm.getAscent();
 			final int x = b.x + ((b.width - fm.stringWidth(line.text)) / 2);
-			g.setFont(line.font);
-			// shadow for legibility
-			g.setColor(Color.BLACK);
-			g.drawString(line.text, x + 1, y + 1);
-			g.setColor(line.color);
-			g.drawString(line.text, x, y);
-			y += fm.getDescent() + LINE_GAP;
+
+			if (line.subid >= 0)
+			{
+				// Option row: a padded, comfortably-spaced line.
+				final int rowH = fm.getAscent() + fm.getDescent() + (OPTION_PAD * 2);
+				final int baseline = y + OPTION_PAD + fm.getAscent();
+				g.setFont(line.font);
+				g.setColor(Color.BLACK);
+				g.drawString(line.text, x + 1, baseline + 1);
+				g.setColor(line.color);
+				g.drawString(line.text, x, baseline);
+				y += rowH + OPTION_GAP;
+			}
+			else
+			{
+				// Plain line (title / body / "Select an Option" header): original tight spacing.
+				y += fm.getAscent();
+				g.setFont(line.font);
+				// shadow for legibility
+				g.setColor(Color.BLACK);
+				g.drawString(line.text, x + 1, y + 1);
+				g.setColor(line.color);
+				g.drawString(line.text, x, y);
+				y += fm.getDescent() + LINE_GAP;
+			}
 		}
 	}
 
@@ -176,12 +313,15 @@ class ImmersiveDialogueOverlay extends Overlay
 		private final String text;
 		private final Font font;
 		private final Color color;
+		/** Native option child index for a clickable option line, or {@code -1} for plain text. */
+		private final int subid;
 
-		private Line(String text, Font font, Color color)
+		private Line(String text, Font font, Color color, int subid)
 		{
 			this.text = text;
 			this.font = font;
 			this.color = color;
+			this.subid = subid;
 		}
 	}
 }

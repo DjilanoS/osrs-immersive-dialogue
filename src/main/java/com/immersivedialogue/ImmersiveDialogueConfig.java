@@ -17,28 +17,30 @@ public interface ImmersiveDialogueConfig extends Config
 	@ConfigSection(
 		name = "Position",
 		description = "Where the dialogue box is placed on the screen.",
-		position = 0
+		position = 1
 	)
 	String positionSection = "position";
 
 	@ConfigSection(
-		name = "Appearance",
-		description = "Backdrop and text styling.",
-		position = 1
+		name = "Dialogue appearance",
+		description = "Backdrop, text and title styling for the dialogue box.",
+		position = 2
 	)
 	String appearanceSection = "appearance";
 
-	@ConfigItem(
-		keyName = "relocate",
-		name = "Relocate dialogue",
-		description = "Move NPC/player dialogue to a box at the bottom-center of the screen. Turn off to keep the vanilla chatbox dialogue.",
-		section = positionSection,
-		position = 0
+	@ConfigSection(
+		name = "Avatar appearance",
+		description = "Backdrop behind the chat-head, plus the box border and corner shape.",
+		position = 3
 	)
-	default boolean relocate()
-	{
-		return true;
-	}
+	String frameSection = "frame";
+
+	@ConfigSection(
+		name = "Transitions",
+		description = "Fade transitions when the dialogue box opens and closes.",
+		position = 4
+	)
+	String animationSection = "animation";
 
 	@Range(min = 0, max = 800)
 	@Units(Units.PIXELS)
@@ -47,7 +49,7 @@ public interface ImmersiveDialogueConfig extends Config
 		name = "Bottom margin",
 		description = "Distance of the dialogue box from the bottom edge of the screen.",
 		section = positionSection,
-		position = 1
+		position = 2
 	)
 	default int bottomMargin()
 	{
@@ -61,7 +63,7 @@ public interface ImmersiveDialogueConfig extends Config
 		name = "Horizontal offset",
 		description = "Shift the dialogue box left (negative) or right (positive) from the horizontal center.",
 		section = positionSection,
-		position = 2
+		position = 3
 	)
 	default int horizontalOffset()
 	{
@@ -78,7 +80,7 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	default Color backgroundColor()
 	{
-		return new Color(0, 0, 0, 190);
+		return new Color(60, 42, 28, 205);
 	}
 
 	@Range(min = 0, max = 64)
@@ -95,18 +97,6 @@ public interface ImmersiveDialogueConfig extends Config
 		return 12;
 	}
 
-	@ConfigItem(
-		keyName = "restyleText",
-		name = "Recolor text",
-		description = "Recolor dialogue body text and options so they stay legible on the dark backdrop.",
-		section = appearanceSection,
-		position = 2
-	)
-	default boolean restyleText()
-	{
-		return true;
-	}
-
 	@Alpha
 	@ConfigItem(
 		keyName = "textColor",
@@ -120,41 +110,165 @@ public interface ImmersiveDialogueConfig extends Config
 		return Color.WHITE;
 	}
 
+	@Range(min = 12, max = 28)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "textSize",
+		name = "Text size",
+		description = "Font size of the dialogue body text and options.",
+		section = appearanceSection,
+		position = 4
+	)
+	default int textSize()
+	{
+		return 16;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "nameColor",
 		name = "Name color",
 		description = "Color applied to the speaker's name.",
 		section = appearanceSection,
-		position = 4
+		position = 5
 	)
 	default Color nameColor()
 	{
 		return new Color(255, 200, 90);
 	}
 
+	@Range(min = 14, max = 28)
+	@Units(Units.PIXELS)
 	@ConfigItem(
-		keyName = "animateHead",
-		name = "Animate head (experimental)",
-		description = "Play the talking head animation. EXPERIMENTAL: some NPC heads can crash the client when animated; leave off for a stable static head.",
+		keyName = "titleFontSize",
+		name = "Title size",
+		description = "Font size of the speaker's name / title shown at the top of the dialogue box.",
 		section = appearanceSection,
-		position = 5,
-		warning = "Animating relocated chat-heads is experimental and can crash the game client for some NPCs. Enable at your own risk."
+		position = 6
 	)
-	default boolean animateHead()
+	default int titleFontSize()
+	{
+		return 19;
+	}
+
+	@ConfigItem(
+		keyName = "showBorder",
+		name = "Show border",
+		description = "Draw a framed border around the dialogue box (and avatar panel), styled after the vanilla chatbox frame.",
+		section = appearanceSection,
+		position = 7
+	)
+	default boolean showBorder()
+	{
+		return true;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "borderColor",
+		name = "Border color",
+		description = "Color of the dialogue box border.",
+		section = appearanceSection,
+		position = 8
+	)
+	default Color borderColor()
+	{
+		return new Color(116, 95, 60, 255);
+	}
+
+	@Range(min = 1, max = 8)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "borderWidth",
+		name = "Border width",
+		description = "Thickness of the dialogue box border.",
+		section = appearanceSection,
+		position = 9
+	)
+	default int borderWidth()
+	{
+		return 2;
+	}
+
+	@Range(min = 0, max = 40)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "cornerRadius",
+		name = "Corner radius",
+		description = "Rounding of the box corners. Set to 0 for square corners (no border-radius).",
+		section = appearanceSection,
+		position = 10
+	)
+	default int cornerRadius()
+	{
+		return 16;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "questHelperHighlightColor",
+		name = "Quest Helper highlight color",
+		description = "Color used to highlight the option Quest Helper marks as correct. Kept legible on the dark backdrop; Quest Helper's own color is only used to detect which option to highlight. Has no effect without Quest Helper installed.",
+		section = appearanceSection,
+		position = 11
+	)
+	default Color questHelperHighlightColor()
+	{
+		return new Color(120, 180, 255);
+	}
+
+	// --- Avatar appearance -----------------------------------------------------
+
+	@ConfigItem(
+		keyName = "avatarBackground",
+		name = "Avatar backdrop",
+		description = "Draw a colored panel behind the chat-head, framing the avatar.",
+		section = frameSection,
+		position = 0
+	)
+	default boolean avatarBackground()
 	{
 		return false;
 	}
 
+	@Alpha
 	@ConfigItem(
-		keyName = "debugOverlay",
-		name = "Debug overlay",
-		description = "Show diagnostic widget metrics (for troubleshooting only).",
-		section = appearanceSection,
-		position = 6
+		keyName = "avatarBackgroundColor",
+		name = "Avatar color",
+		description = "Color and opacity of the panel drawn behind the chat-head.",
+		section = frameSection,
+		position = 1
 	)
-	default boolean debugOverlay()
+	default Color avatarBackgroundColor()
 	{
-		return false;
+		return new Color(45, 32, 22, 215);
+	}
+
+	// --- Transitions -----------------------------------------------------------
+
+	@ConfigItem(
+		keyName = "fade",
+		name = "Fade in / out",
+		description = "Fade the dialogue box in when it opens and out when it closes.",
+		section = animationSection,
+		position = 0
+	)
+	default boolean fade()
+	{
+		return true;
+	}
+
+	@Range(min = 250, max = 1000)
+	@Units(Units.MILLISECONDS)
+	@ConfigItem(
+		keyName = "fadeDuration",
+		name = "Fade duration",
+		description = "How long the fade in / out takes.",
+		section = animationSection,
+		position = 1
+	)
+	default int fadeDuration()
+	{
+		return 150;
 	}
 }
