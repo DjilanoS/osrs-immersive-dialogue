@@ -15,13 +15,6 @@ public interface ImmersiveDialogueConfig extends Config
 	String GROUP = "immersivedialogue";
 
 	@ConfigSection(
-		name = "General",
-		description = "Head animation and diagnostics.",
-		position = 0
-	)
-	String generalSection = "general";
-
-	@ConfigSection(
 		name = "Position",
 		description = "Where the dialogue box is placed on the screen.",
 		position = 1
@@ -48,32 +41,6 @@ public interface ImmersiveDialogueConfig extends Config
 		position = 4
 	)
 	String animationSection = "animation";
-
-	// --- General ---------------------------------------------------------------
-
-	@ConfigItem(
-		keyName = "animateHead",
-		name = "Animate head",
-		description = "Play the talking head animation instead of a static head.",
-		section = generalSection,
-		position = 0
-	)
-	default boolean animateHead()
-	{
-		return false;
-	}
-
-	@ConfigItem(
-		keyName = "debugOverlay",
-		name = "Debug overlay",
-		description = "Show diagnostic widget metrics (for troubleshooting only).",
-		section = generalSection,
-		position = 1
-	)
-	default boolean debugOverlay()
-	{
-		return false;
-	}
 
 	@Range(min = 0, max = 800)
 	@Units(Units.PIXELS)
@@ -128,18 +95,6 @@ public interface ImmersiveDialogueConfig extends Config
 	default int backdropPadding()
 	{
 		return 12;
-	}
-
-	@ConfigItem(
-		keyName = "restyleText",
-		name = "Recolor text",
-		description = "Recolor dialogue body text and options so they stay legible on the dark backdrop.",
-		section = appearanceSection,
-		position = 2
-	)
-	default boolean restyleText()
-	{
-		return true;
 	}
 
 	@Alpha
@@ -303,12 +258,12 @@ public interface ImmersiveDialogueConfig extends Config
 		return true;
 	}
 
-	@Range(min = 0, max = 1000)
+	@Range(min = 250, max = 1000)
 	@Units(Units.MILLISECONDS)
 	@ConfigItem(
 		keyName = "fadeDuration",
 		name = "Fade duration",
-		description = "How long the fade in / out takes. 0 disables the fade (instant).",
+		description = "How long the fade in / out takes.",
 		section = animationSection,
 		position = 1
 	)

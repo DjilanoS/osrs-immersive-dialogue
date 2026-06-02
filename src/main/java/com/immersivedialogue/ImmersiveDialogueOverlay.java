@@ -32,10 +32,9 @@ class ImmersiveDialogueOverlay extends Overlay
 	static final int LINE_GAP = 3;
 	static final int OPTION_PAD = 5;
 	static final int OPTION_GAP = 6;
-	private static final Color HOVER_COLOR = new Color(255, 255, 255, 45);
-	private static final String CONTINUE_TEXT = "Click here to continue";
-	private static final Color CONTINUE_COLOR = new Color(255, 255, 255, 165);
-	private static final Color CONTINUE_HOVER_COLOR = Color.WHITE;
+	private static final String CONTINUE_TEXT = "Press Space to continue";
+	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
+	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
 	private final Client client;
 	private final DialogueWidgetController controller;
@@ -183,15 +182,19 @@ class ImmersiveDialogueOverlay extends Overlay
 		}
 
 		drawTextBlock(g, b, lines);
-		// Plain NPC/player dialogue advances on a click anywhere in the box; hint at that affordance.
-		drawContinuePrompt(g, b, bodyFont);
+		// NPC/player dialogue advances on the spacebar; hint at that affordance.
+		drawBottomHint(g, b, bodyFont, CONTINUE_TEXT);
 	}
 
-	/** A bottom-centered "click to continue" hint that brightens while the cursor is over the box. */
-	private void drawContinuePrompt(Graphics2D g, Rectangle b, Font font)
+	/**
+	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …"). Muted by default,
+	 * it brightens to full white while the cursor is over the dialogue box, drawing attention to the keys that
+	 * drive it.
+	 */
+	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text)
 	{
 		final FontMetrics fm = g.getFontMetrics(font);
-		final int x = b.x + ((b.width - fm.stringWidth(CONTINUE_TEXT)) / 2);
+		final int x = b.x + ((b.width - fm.stringWidth(text)) / 2);
 		final int y = b.y + b.height - fm.getDescent() - (INSET / 2);
 
 		final Point mouse = client.getMouseCanvasPosition();
@@ -199,41 +202,49 @@ class ImmersiveDialogueOverlay extends Overlay
 
 		g.setFont(font);
 		g.setColor(Color.BLACK);
-		g.drawString(CONTINUE_TEXT, x + 1, y + 1);
-		g.setColor(hover ? CONTINUE_HOVER_COLOR : CONTINUE_COLOR);
-		g.drawString(CONTINUE_TEXT, x, y);
+		g.drawString(text, x + 1, y + 1);
+		g.setColor(hover ? HINT_HOVER_COLOR : HINT_COLOR);
+		g.drawString(text, x, y);
 	}
 
 	private void drawOptions(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
 		Color nameColor, Color textColor)
 	{
 		final List<Line> lines = new ArrayList<>();
+		int number = 0;
 		for (final DialogueWidgetController.Option option : controller.getOptions())
 		{
-			// Child subid 0 is the "Select an Option" header: render it as the non-clickable title.
+			// Child subid 0 is the "Select an Option" header: render it as the title (no number key).
 			final boolean header = option.subid == 0;
 			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
 			final Color color = option.highlighted ? config.questHelperHighlightColor()
 				: (header ? nameColor : textColor);
-			lines.add(new Line(option.text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
+			// Prefix each real option with the [1]-[5] number key that selects it natively.
+			final String text = header ? option.text : "[" + (++number) + "] " + option.text;
+			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
-		controller.setOptionHits(drawTextBlock(g, b, lines));
+		drawTextBlock(g, b, lines);
+		if (number > 0)
+		{
+			final String hint = number == 1
+				? "Use key [1] to select an option"
+				: "Use keys [1] - [" + number + "] to select an option";
+			drawBottomHint(g, b, bodyFont, hint);
+		}
 	}
 
 	/**
 	 * Draws a block of lines top-aligned within the box, each horizontally centered. A line carrying a
-	 * non-negative subid is a clickable option: a full-width hit rectangle is recorded for it and the
-	 * line under the cursor gets a hover highlight. Returns the option hit targets (empty for plain text).
+	 * non-negative subid is an option row, given comfortable padding so the numbered choices are easy to
+	 * read; selection itself is handled natively by the 1-5 keys, so no hit-testing is done here.
 	 */
-	private List<DialogueWidgetController.OptionHit> drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
+	private void drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
 	{
-		final List<DialogueWidgetController.OptionHit> hits = new ArrayList<>();
 		if (lines.isEmpty())
 		{
-			return hits;
+			return;
 		}
 
-		final Point mouse = client.getMouseCanvasPosition();
 		int y = b.y + INSET;
 		for (final Line line : lines)
 		{
@@ -242,16 +253,8 @@ class ImmersiveDialogueOverlay extends Overlay
 
 			if (line.subid >= 0)
 			{
-				// Clickable option: a padded, comfortably-spaced hover/hit row.
+				// Option row: a padded, comfortably-spaced line.
 				final int rowH = fm.getAscent() + fm.getDescent() + (OPTION_PAD * 2);
-				final Rectangle hit = new Rectangle(b.x, y, b.width, rowH);
-				if (mouse != null && hit.contains(mouse.getX(), mouse.getY()))
-				{
-					g.setColor(HOVER_COLOR);
-					g.fillRect(hit.x, hit.y, hit.width, hit.height);
-				}
-				hits.add(new DialogueWidgetController.OptionHit(line.subid, hit));
-
 				final int baseline = y + OPTION_PAD + fm.getAscent();
 				g.setFont(line.font);
 				g.setColor(Color.BLACK);
@@ -273,7 +276,6 @@ class ImmersiveDialogueOverlay extends Overlay
 				y += fm.getDescent() + LINE_GAP;
 			}
 		}
-		return hits;
 	}
 
 	private static List<String> wrap(String text, FontMetrics fm, int maxWidth)

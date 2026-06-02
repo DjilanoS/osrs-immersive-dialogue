@@ -10,7 +10,6 @@ import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.MenuAction;
 import net.runelite.api.Point;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
@@ -28,7 +27,7 @@ import net.runelite.client.config.ConfigManager;
  * and a Graphics2D overlay cannot draw a live 3D model. Hence we create one MODEL widget on the
  * top-level root and reuse it forever (creating per line stacks duplicate heads).</p>
  *
- * <p><b>Animation:</b> animating a relocated head is opt-in ({@code animateHead}). A reused MODEL
+ * <p><b>Animation:</b> the relocated head plays its live talking animation. A reused MODEL
  * widget keeps an internal {@code modelFrame} counter that the client's render thread advances; if
  * a new head's shorter sequence is applied while that counter still holds a stale index from a
  * previous longer animation, the renderer indexes past the frame array and crashes
@@ -66,19 +65,6 @@ class DialogueWidgetController
 		}
 	}
 
-	/** A published click target for an option: its native child index and on-screen rectangle. */
-	static final class OptionHit
-	{
-		final int subid;
-		final Rectangle rect;
-
-		OptionHit(int subid, Rectangle rect)
-		{
-			this.subid = subid;
-			this.rect = rect;
-		}
-	}
-
 	// Approximate native dialogue size; used for the bottom-center backdrop box.
 	private static final int BOX_W = 506;
 	private static final int BOX_H = 155;
@@ -87,15 +73,17 @@ class DialogueWidgetController
 	// Gap between the avatar and the box: the NPC avatar sits this far left of the box, the player
 	// avatar this far right of it, so neither touches the dialogue box edge.
 	private static final int HEAD_GAP = 6;
-	private static final int NO_ANIM = -1;
+	// Widget opacity: 0 = fully opaque, 255 = fully transparent (RuneLite's setOpacity convention).
+	private static final int OPACITY_OPAQUE = 0;
+	private static final int OPACITY_TRANSPARENT = 255;
 	/** Below this the fade-out is treated as complete and the dialogue is fully cleared. */
 	private static final float ALPHA_EPSILON = 0.01f;
 
 	// Adaptive OPTIONS box sizing. The per-row text-height allowance is the configured text size plus this
 	// buffer, over-estimating the runescape body line height so the box always covers the option rows the
-	// overlay draws (their click rects must stay inside it).
+	// overlay draws.
 	private static final int OPTION_TEXT_BUFFER = 4;
-	private static final int OPTIONS_MAX_H = 280;
+	private static final int OPTIONS_MAX_H = 300;
 
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
@@ -118,23 +106,14 @@ class DialogueWidgetController
 	/** Canvas rectangle of the relocated head this frame (for click-blocking), or {@code null}. */
 	@Getter
 	private volatile Rectangle headBounds;
-	/** Whether the current speaker is the local player (selects which CONTINUE widget to use). */
-	@Getter
-	private volatile boolean playerSpeaker;
-	/** Per-option click targets published by the overlay each frame (empty unless options are shown). */
-	@Getter
-	private volatile List<OptionHit> optionHits = Collections.emptyList();
-	/** Native dialogue components we hid this frame, restored at the top of the next apply(). */
+	/** Native display components we hid this frame (setHidden), restored at the top of the next apply(). */
 	private final List<Integer> hiddenComponents = new ArrayList<>();
+	/** Native interactive components we made transparent this frame (setOpacity, kept usable), restored next apply(). */
+	private final List<Integer> dimmedComponents = new ArrayList<>();
 
-	// Our head widgets / diagnostics (read by the debug overlay).
-	@Getter
+	// Our head widgets, reused across frames (see renderHead).
 	private Widget headSource;
-	@Getter
-	private Widget host;
-	@Getter
 	private Widget headContainer;
-	@Getter
 	private Widget createdHead;
 
 	private int builtModelType = Integer.MIN_VALUE;
@@ -209,7 +188,6 @@ class DialogueWidgetController
 		options = Collections.emptyList();
 		headSource = null;
 		kind = detected;
-		playerSpeaker = isPlayer;
 
 		switch (detected)
 		{
@@ -239,13 +217,6 @@ class DialogueWidgetController
 		final int y = ch - boxH - config.bottomMargin();
 		bounds = new Rectangle(x, y, BOX_W, boxH);
 
-		// Options publish their own hit-rects from the overlay's render pass; plain dialogue has none,
-		// so clear any stale targets here.
-		if (kind != Kind.OPTIONS)
-		{
-			optionHits = Collections.emptyList();
-		}
-
 		if (headSource != null && headSource.getModelType() > 0)
 		{
 			final int hx = isPlayer ? (bounds.x + bounds.width + HEAD_GAP) : (bounds.x - HEAD_W - HEAD_GAP);
@@ -260,10 +231,9 @@ class DialogueWidgetController
 
 		applyHeadOpacity();
 
-		// Finally, hide the native chatbox dialogue we replace. Done last so every read above sees the
-		// widgets visible; re-applied each frame because the client's clientscripts re-show them on
-		// rebuild.
-		hideNative(kind, isPlayer);
+		// Finally, suppress the native dialogue (hide the display widgets, dim the interactive ones). Done last
+		// so every read above sees them normal; re-applied each frame because the client rebuilds them per line.
+		hideNative(kind);
 	}
 
 	/** True when the fade feature is on and has a non-zero duration (otherwise transitions are instant). */
@@ -325,39 +295,9 @@ class DialogueWidgetController
 		kind = Kind.NONE;
 		speakerName = null;
 		bodyText = null;
-		playerSpeaker = false;
 		options = Collections.emptyList();
-		optionHits = Collections.emptyList();
 		headSource = null;
 		hideHead();
-	}
-
-	/** Published by the overlay each frame: the clickable rectangle for each option line. */
-	void setOptionHits(List<OptionHit> hits)
-	{
-		optionHits = hits == null ? Collections.emptyList() : hits;
-	}
-
-	/**
-	 * Advances the current relocated "click here to continue" NPC/player dialogue via its CONTINUE widget,
-	 * mirroring a {@code WIDGET_CONTINUE} the player would otherwise trigger (a sanctioned API call, not a
-	 * synthesized input event). Shared by the mouse (click) and keyboard (spacebar) listeners so both
-	 * advance through the identical, already-verified path. MUST be invoked on the client thread.
-	 */
-	void continueDialogue()
-	{
-		if (kind != Kind.NPC && kind != Kind.PLAYER)
-		{
-			return;
-		}
-		final int continueId = playerSpeaker ? InterfaceID.ChatRight.CONTINUE : InterfaceID.ChatLeft.CONTINUE;
-		final Widget cont = client.getWidget(continueId);
-		if (cont == null)
-		{
-			// Final line / no continue button present (or already closed mid-fade): nothing to advance.
-			return;
-		}
-		client.menuAction(-1, continueId, MenuAction.WIDGET_CONTINUE, 1, -1, "Continue", "");
 	}
 
 	/**
@@ -381,6 +321,8 @@ class DialogueWidgetController
 				h += (config.textSize() + OPTION_TEXT_BUFFER) + (ImmersiveDialogueOverlay.OPTION_PAD * 2) + ImmersiveDialogueOverlay.OPTION_GAP;
 			}
 		}
+		// Reserve a line at the bottom for the "Use keys [1] - [N]" hint (drawn in the body font).
+		h += config.textSize() + OPTION_TEXT_BUFFER + ImmersiveDialogueOverlay.LINE_GAP;
 		return Math.min(h, OPTIONS_MAX_H);
 	}
 
@@ -432,9 +374,9 @@ class DialogueWidgetController
 
 	/**
 	 * Reads the option lines, capturing each line's native child index ({@code getIndex()}) as its
-	 * {@code subid}. That subid is what {@link Widget#getChild(int)} and the menu use to resolve the
-	 * option, so handing it back as {@code param0} of a {@code WIDGET_CONTINUE} action selects exactly
-	 * the clicked option. Child {@code subid 0} is the "Select an Option" header.
+	 * {@code subid} plus whether Quest Helper highlighted it. The {@code subid} is used only to identify the
+	 * "Select an Option" header (child {@code subid 0}) and to keep the options in native order; selection
+	 * itself is handled natively by the 1-5 number keys, so the plugin never acts on it.
 	 */
 	private List<Option> readOptions(Widget optionsWidget)
 	{
@@ -512,36 +454,40 @@ class DialogueWidgetController
 		return s.trim();
 	}
 
-	/** Hide the native chatbox dialogue we replace (re-applied every frame; see {@link #apply()}). */
-	private void hideNative(Kind dialogueKind, boolean isPlayer)
+	/**
+	 * Make the native dialogue invisible while keeping it functional. The chatbox's (otherwise empty) beige
+	 * dialogue background and the non-interactive display widgets we redraw — speaker NAME, body TEXT, chat
+	 * HEAD — are {@code setHidden(true)}. The INTERACTIVE widgets (the CONTINUE prompt and the option list)
+	 * are instead made fully transparent via {@link #dim} ({@code setOpacity}, NOT {@code setHidden}): opacity
+	 * is render-only, so they vanish visually yet still receive the game's own spacebar / number-key (1-5) /
+	 * click handling — the player advances and selects entirely through the native client (no synthesized
+	 * input). Re-applied every frame (the client rebuilds these widgets per line); both the hide and the dim
+	 * are reverted at the top of the next apply(), so the beige background returns for normal chat once the
+	 * dialogue closes.
+	 */
+	private void hideNative(Kind dialogueKind)
 	{
-		// Keep RuneScape's beige dialogue background (Chatbox.CHAT_BACKGROUND, which the game shows when a
-		// dialogue opens) and force the native chat display back on OVER it — the game hides the chat
-		// whenever a dialogue opens — so the chatbox shows the player's normal chat on the beige (the native
-		// opaque-chatbox look) instead of an empty box. The beige is the chatbox's background layer and the
-		// chat lines draw after it, so the chat naturally sits in front; no z-reordering is needed. Re-asserted
-		// every frame; the game's own message-layer-close script re-hides the chat once the dialogue ends, so
-		// no restore is needed.
-		show(InterfaceID.Chatbox.CHATDISPLAY);
-		show(InterfaceID.Chatbox.SCROLLAREA);
+		// The chatbox draws a beige panel behind any open dialogue; hide it so the relocated box stands alone
+		// over a clean chatbox. Restored by restoreNative() the instant the dialogue closes (so normal chat
+		// keeps its background) — this hides, never un-hides, a game-shown component.
+		hide(InterfaceID.Chatbox.CHAT_BACKGROUND);
 		switch (dialogueKind)
 		{
 			case NPC:
-				hide(InterfaceID.ChatLeft.CONTENT);
 				hide(InterfaceID.ChatLeft.NAME);
 				hide(InterfaceID.ChatLeft.TEXT);
-				hide(InterfaceID.ChatLeft.CONTINUE);
 				hide(InterfaceID.ChatLeft.HEAD);
+				dim(InterfaceID.ChatLeft.CONTINUE);
 				break;
 			case PLAYER:
-				hide(InterfaceID.ChatRight.CONTENT);
 				hide(InterfaceID.ChatRight.NAME);
 				hide(InterfaceID.ChatRight.TEXT);
-				hide(InterfaceID.ChatRight.CONTINUE);
 				hide(InterfaceID.ChatRight.HEAD);
+				dim(InterfaceID.ChatRight.CONTINUE);
 				break;
 			case OPTIONS:
-				hide(InterfaceID.Chatmenu.OPTIONS);
+				// Dim (not hide) the option list so native number-key (1-5) / click selection still works.
+				dim(InterfaceID.Chatmenu.OPTIONS);
 				break;
 			default:
 				break;
@@ -559,27 +505,53 @@ class DialogueWidgetController
 	}
 
 	/**
-	 * Force a native component visible (the inverse of {@link #hide}). Used to re-show the chat display the
-	 * game hides during dialogue. Deliberately NOT tracked for restore: its natural post-dialogue state is
-	 * already visible and the game re-shows it on dialogue close, so re-asserting it each open frame and
-	 * leaving it untouched otherwise is self-correcting.
+	 * Make a native interactive widget (and its option-line children) fully transparent WITHOUT hiding it, so
+	 * it disappears visually but still receives native key/click handling (a {@code setHidden} widget does
+	 * not). Reverted by {@link #restoreNative()}.
 	 */
-	private void show(int componentId)
+	private void dim(int componentId)
 	{
 		final Widget w = client.getWidget(componentId);
 		if (w != null)
 		{
-			w.setHidden(false);
+			setOpacityDeep(w, OPACITY_TRANSPARENT);
+			dimmedComponents.add(componentId);
 		}
 	}
 
-	/** Restore everything {@link #hideNative} hid, so the chatbox is never left blank. */
-	private void restoreNative()
+	/** Set {@code opacity} on a widget and each of its children (dialogue option lines are child widgets). */
+	private static void setOpacityDeep(Widget w, int opacity)
 	{
-		if (hiddenComponents.isEmpty())
+		try
+		{
+			w.setOpacity(opacity);
+			applyOpacity(w.getDynamicChildren(), opacity);
+			applyOpacity(w.getStaticChildren(), opacity);
+		}
+		catch (Exception ignored)
+		{
+			// opacity is a cosmetic best-effort; a failure here must never break the frame
+		}
+	}
+
+	private static void applyOpacity(Widget[] children, int opacity)
+	{
+		if (children == null)
 		{
 			return;
 		}
+		for (final Widget c : children)
+		{
+			if (c != null)
+			{
+				c.setOpacity(opacity);
+			}
+		}
+	}
+
+	/** Revert everything {@link #hideNative} changed — un-hide the hidden widgets and un-dim the transparent ones. */
+	private void restoreNative()
+	{
 		for (final int id : hiddenComponents)
 		{
 			final Widget w = client.getWidget(id);
@@ -589,16 +561,26 @@ class DialogueWidgetController
 			}
 		}
 		hiddenComponents.clear();
+
+		for (final int id : dimmedComponents)
+		{
+			final Widget w = client.getWidget(id);
+			if (w != null)
+			{
+				setOpacityDeep(w, OPACITY_OPAQUE);
+			}
+		}
+		dimmedComponents.clear();
 	}
 
 	/**
-	 * Re-asserts our native-dialogue hiding (and keeps the chat shown) for the dialogue currently open.
-	 * Subscribed to {@code WidgetLoaded} for the dialogue interfaces: when the game rebuilds the dialogue on
-	 * a NEW LINE it briefly re-shows the native dialogue (and re-hides the chat we force-show), which would
-	 * flash for one frame until the next {@code BeforeRender} — re-hiding it the instant the interface
-	 * reloads removes that flash. Only acts while a relocated dialogue is ALREADY active, so we never hide the
-	 * native dialogue before our replacement box exists on the first open. Cheap and idempotent; it does not
-	 * touch the fade, the head, or the published content (the following {@code apply()} refreshes those).
+	 * Re-asserts our native display-widget hiding for the dialogue currently open. Subscribed to
+	 * {@code WidgetLoaded} for the dialogue interfaces: when the game rebuilds the dialogue on a NEW LINE it
+	 * briefly re-shows the native name/text/head we hide, which would flash for one frame until the next
+	 * {@code BeforeRender} — re-hiding it the instant the interface reloads removes that flash. Only acts
+	 * while a relocated dialogue is ALREADY active, so we never hide the native widgets before our replacement
+	 * box exists on the first open. Cheap and idempotent; it does not touch the fade, the head, or the
+	 * published content (the following {@code apply()} refreshes those).
 	 */
 	void reassertNativeVisibility()
 	{
@@ -607,7 +589,6 @@ class DialogueWidgetController
 			return;
 		}
 		Kind detected = Kind.NONE;
-		boolean isPlayer = false;
 		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
 		{
 			detected = Kind.NPC;
@@ -615,7 +596,6 @@ class DialogueWidgetController
 		else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
 		{
 			detected = Kind.PLAYER;
-			isPlayer = true;
 		}
 		else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
 		{
@@ -623,14 +603,13 @@ class DialogueWidgetController
 		}
 		if (detected != Kind.NONE)
 		{
-			hideNative(detected, isPlayer);
+			hideNative(detected);
 		}
 	}
 
 	private void renderHead(Widget src, boolean isPlayer, Rectangle box)
 	{
 		final Widget parent = topAncestor(src);
-		host = parent;
 		if (parent == null)
 		{
 			hideHead();
@@ -680,7 +659,7 @@ class DialogueWidgetController
 
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
-			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
+			final int animation = src.getAnimationId();
 
 			if (createdHead == null
 				|| modelType != builtModelType

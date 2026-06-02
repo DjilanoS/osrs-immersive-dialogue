@@ -3,19 +3,11 @@ package com.immersivedialogue;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
-import net.runelite.api.MenuAction;
-import net.runelite.api.MenuEntry;
-import net.runelite.api.Point;
 import net.runelite.api.events.BeforeRender;
-import net.runelite.api.events.MenuOptionClicked;
-import net.runelite.api.events.PostMenuSort;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -36,36 +28,19 @@ public class ImmersiveDialoguePlugin extends Plugin
 	private ImmersiveDialogueOverlay overlay;
 
 	@Inject
-	private DialogueDebugOverlay debugOverlay;
-
-	@Inject
 	private DialogueWidgetController controller;
 
 	@Inject
 	private DialogueMouseListener mouseListener;
 
 	@Inject
-	private DialogueKeyListener keyListener;
-
-	@Inject
 	private MouseManager mouseManager;
-
-	@Inject
-	private KeyManager keyManager;
-
-	@Inject
-	private ImmersiveDialogueConfig config;
-
-	@Inject
-	private Client client;
 
 	@Override
 	protected void startUp()
 	{
 		overlayManager.add(overlay);
-		overlayManager.add(debugOverlay);
 		mouseManager.registerMouseListener(mouseListener);
-		keyManager.registerKeyListener(keyListener);
 		log.debug("Immersive Dialogue started");
 	}
 
@@ -73,9 +48,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
-		overlayManager.remove(debugOverlay);
 		mouseManager.unregisterMouseListener(mouseListener);
-		keyManager.unregisterKeyListener(keyListener);
 		controller.cleanup();
 		log.debug("Immersive Dialogue stopped");
 	}
@@ -92,43 +65,12 @@ public class ImmersiveDialoguePlugin extends Plugin
 	public void onWidgetLoaded(WidgetLoaded event)
 	{
 		// When the game rebuilds a dialogue interface (e.g. advancing to a new line) it briefly re-shows the
-		// native dialogue and re-hides the chat; re-apply our hiding the instant the interface reloads so it
-		// does not flash for one frame before the next BeforeRender catches it.
+		// native display widgets we hide; re-apply our hiding the instant the interface reloads so the
+		// relocated box does not flash for one frame before the next BeforeRender catches it.
 		final int group = event.getGroupId();
 		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU)
 		{
 			controller.reassertNativeVisibility();
-		}
-	}
-
-	@Subscribe
-	public void onMenuOptionClicked(MenuOptionClicked event)
-	{
-		// Diagnostic (debug overlay only): logs the exact params of dialogue continue/option clicks so
-		// the menuAction parameters used by DialogueMouseListener can be confirmed against a real click.
-		if (config.debugOverlay() && event.getMenuAction() == MenuAction.WIDGET_CONTINUE)
-		{
-			final Widget w = event.getWidget();
-			log.debug("WIDGET_CONTINUE param0={} param1={} id={} option='{}' target='{}' widget(id={} index={})",
-				event.getParam0(), event.getParam1(), event.getId(), event.getMenuOption(),
-				event.getMenuTarget(), w != null ? w.getId() : -1, w != null ? w.getIndex() : -1);
-		}
-	}
-
-	@Subscribe
-	public void onPostMenuSort(PostMenuSort event)
-	{
-		// Suppress the world hover menu/tooltip while the cursor is over the relocated box, so nothing in
-		// the 3D world (e.g. "Pickup Sweetcorn") shows through it. Consuming the click blocks the action;
-		// this blocks the hover text too. Skip when a right-click menu is already open.
-		if (client.isMenuOpen())
-		{
-			return;
-		}
-		final Point mouse = client.getMouseCanvasPosition();
-		if (mouse != null && controller.blocks(mouse.getX(), mouse.getY()))
-		{
-			client.getMenu().setMenuEntries(new MenuEntry[0]);
 		}
 	}
 
