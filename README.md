@@ -41,12 +41,13 @@ same live, animated head on its own surface, so for the first time you see the
 - **Number keys 1–5** — select an option. The relocated panel numbers each
   option so it's obvious which key picks which.
 
-**Why can't I click options?** Routing a click into the conversation would mean
-*synthesizing a menu action*, which sends a packet to the game server. The Plugin
-Hub rules forbid injecting input and forbid menu entries that send actions to the
-server, so Immersive Dialogue deliberately does not do it. Clicks that land on
-the relocated panel are simply swallowed, so you don't accidentally click the 3D
-world behind it while reading.
+> **Why can't I click options?** 
+> Routing a click into the conversation would mean
+> *synthesizing a menu action*, which sends a packet to the game server. The Plugin
+> Hub rules forbid injecting input and forbid menu entries that send actions to the
+> server, so Immersive Dialogue deliberately does not do it. Clicks that land on
+> the relocated panel are simply swallowed, so you don't accidentally click the 3D
+> world behind it while reading.
 
 ## Customization
 
