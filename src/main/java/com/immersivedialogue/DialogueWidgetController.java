@@ -9,6 +9,7 @@ import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
+import net.runelite.api.MenuAction;
 import net.runelite.api.Point;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
@@ -329,6 +330,28 @@ class DialogueWidgetController
 	void setOptionHits(List<OptionHit> hits)
 	{
 		optionHits = hits == null ? Collections.emptyList() : hits;
+	}
+
+	/**
+	 * Advances the current relocated "click here to continue" NPC/player dialogue via its CONTINUE widget,
+	 * mirroring a {@code WIDGET_CONTINUE} the player would otherwise trigger (a sanctioned API call, not a
+	 * synthesized input event). Shared by the mouse (click) and keyboard (spacebar) listeners so both
+	 * advance through the identical, already-verified path. MUST be invoked on the client thread.
+	 */
+	void continueDialogue()
+	{
+		if (kind != Kind.NPC && kind != Kind.PLAYER)
+		{
+			return;
+		}
+		final int continueId = playerSpeaker ? InterfaceID.ChatRight.CONTINUE : InterfaceID.ChatLeft.CONTINUE;
+		final Widget cont = client.getWidget(continueId);
+		if (cont == null)
+		{
+			// Final line / no continue button present (or already closed mid-fade): nothing to advance.
+			return;
+		}
+		client.menuAction(-1, continueId, MenuAction.WIDGET_CONTINUE, 1, -1, "Continue", "");
 	}
 
 	/**

@@ -108,8 +108,7 @@ class DialogueMouseListener extends MouseAdapter
 		}
 		else if (kind == DialogueWidgetController.Kind.NPC || kind == DialogueWidgetController.Kind.PLAYER)
 		{
-			final boolean isPlayer = controller.isPlayerSpeaker();
-			clientThread.invoke(() -> continueDialogue(isPlayer));
+			clientThread.invoke(controller::continueDialogue);
 		}
 	}
 
@@ -126,18 +125,5 @@ class DialogueMouseListener extends MouseAdapter
 		// param0 = child subid (what getChild()/the menu resolves with), param1 = options widget id.
 		client.menuAction(subid, InterfaceID.Chatmenu.OPTIONS, MenuAction.WIDGET_CONTINUE,
 			subid, -1, option, "");
-	}
-
-	/** Advances a "click here to continue" NPC/player dialogue via its CONTINUE widget. */
-	private void continueDialogue(boolean isPlayer)
-	{
-		final int continueId = isPlayer ? InterfaceID.ChatRight.CONTINUE : InterfaceID.ChatLeft.CONTINUE;
-		final Widget cont = client.getWidget(continueId);
-		if (cont == null)
-		{
-			// Final line / no continue button present: nothing to advance.
-			return;
-		}
-		client.menuAction(-1, continueId, MenuAction.WIDGET_CONTINUE, 1, -1, "Continue", "");
 	}
 }

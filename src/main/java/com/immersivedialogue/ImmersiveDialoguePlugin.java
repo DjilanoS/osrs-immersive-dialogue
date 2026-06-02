@@ -13,6 +13,7 @@ import net.runelite.api.events.PostMenuSort;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -42,7 +43,13 @@ public class ImmersiveDialoguePlugin extends Plugin
 	private DialogueMouseListener mouseListener;
 
 	@Inject
+	private DialogueKeyListener keyListener;
+
+	@Inject
 	private MouseManager mouseManager;
+
+	@Inject
+	private KeyManager keyManager;
 
 	@Inject
 	private ImmersiveDialogueConfig config;
@@ -56,6 +63,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 		overlayManager.add(overlay);
 		overlayManager.add(debugOverlay);
 		mouseManager.registerMouseListener(mouseListener);
+		keyManager.registerKeyListener(keyListener);
 		log.debug("Immersive Dialogue started");
 	}
 
@@ -65,6 +73,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 		overlayManager.remove(overlay);
 		overlayManager.remove(debugOverlay);
 		mouseManager.unregisterMouseListener(mouseListener);
+		keyManager.unregisterKeyListener(keyListener);
 		controller.cleanup();
 		log.debug("Immersive Dialogue stopped");
 	}
