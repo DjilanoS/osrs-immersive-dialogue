@@ -31,6 +31,15 @@ same live, animated head on its own surface, so for the first time you see the
 
 > Prefer the full-quality clip? [Watch the showcase video](docs/immersive-dialogue-showcase.mp4).
 
+## Quest Helper integration
+
+If [Quest Helper](https://github.com/Zoinkwiz/quest-helper) is installed, the
+option it marks as the correct quest choice is highlighted in the relocated
+panel — in a legible color you choose under *Dialogue appearance*. Quest
+Helper's own highlight color is used only to detect which option to mark.
+
+![Quest Helper option highlighted in Immersive Dialogue](docs/quest-helper-support.jpg)
+
 ## Interaction
 
 **All interaction is native.** You drive the dialogue exactly as you always have:
@@ -87,14 +96,6 @@ grouped into four sections.
 | **Fade in / out** | Fade the panel in when it opens and out when it closes. | on |
 | **Fade duration** | How long the fade takes (250–1000 ms). | 150 |
 
-## Quest Helper integration
-
-If [Quest Helper](https://github.com/Zoinkwiz/quest-helper) is installed, the
-option it marks as the correct quest choice is highlighted in the relocated
-panel — in a legible color you choose under *Dialogue appearance*. Quest
-Helper's own highlight color is used only to detect which option to mark.
-
-![Quest Helper option highlighted in Immersive Dialogue](docs/quest-helper-support.jpg)
 
 ## License
 
