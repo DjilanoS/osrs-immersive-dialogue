@@ -627,9 +627,9 @@ class DialogueWidgetController
 			// old one (with its head still rendering) — the cause of heads stacking up.
 			if (headContainer != null && headContainer.getParentId() != parent.getId())
 			{
-				// Genuine root change (e.g. fixed/resizable display switch): retire the stale
+				// Genuine root change (e.g. fixed/resizable display switch): drop the stale
 				// container first so its head can never linger.
-				retireContainer();
+				resetHead();
 			}
 			if (headContainer == null)
 			{
@@ -726,8 +726,13 @@ class DialogueWidgetController
 		}
 	}
 
-	/** Drop the container we're about to abandon (real root change), hiding+clearing it so no head lingers. */
-	private void retireContainer()
+	/**
+	 * Drops our created head widgets so the next {@link #renderHead} rebuilds them on the CURRENT
+	 * interface root. Hides them first (best-effort) so a still-live head can never linger as a
+	 * duplicate; the null is what matters once a logout / world-hop has discarded the old tree.
+	 * Used on a real root change, on a session-ending game state, and on shutdown ({@link #cleanup}).
+	 */
+	void resetHead()
 	{
 		try
 		{
@@ -735,12 +740,15 @@ class DialogueWidgetController
 			{
 				createdHead.setHidden(true);
 			}
-			headContainer.deleteAllChildren();
-			headContainer.setHidden(true);
+			if (headContainer != null)
+			{
+				headContainer.deleteAllChildren();
+				headContainer.setHidden(true);
+			}
 		}
 		catch (Exception e)
 		{
-			log.debug("Failed to retire head container", e);
+			log.debug("Failed to reset head widgets", e);
 		}
 		headContainer = null;
 		createdHead = null;
@@ -787,23 +795,7 @@ class DialogueWidgetController
 	void cleanup()
 	{
 		restoreNative();
-		try
-		{
-			if (headContainer != null)
-			{
-				headContainer.deleteAllChildren();
-				headContainer.setHidden(true);
-			}
-		}
-		catch (Exception e)
-		{
-			log.debug("Failed to clean up head widgets", e);
-		}
-		headContainer = null;
-		createdHead = null;
-		builtModelType = Integer.MIN_VALUE;
-		builtModelId = Integer.MIN_VALUE;
-		builtAnimation = Integer.MIN_VALUE;
+		resetHead();
 		displayAlpha = 0f;
 		lastFrameMs = 0L;
 	}
