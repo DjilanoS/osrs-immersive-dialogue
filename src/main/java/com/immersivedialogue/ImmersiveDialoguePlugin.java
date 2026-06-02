@@ -3,7 +3,9 @@ package com.immersivedialogue;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.GameState;
 import net.runelite.api.events.BeforeRender;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.client.config.ConfigManager;
@@ -71,6 +73,21 @@ public class ImmersiveDialoguePlugin extends Plugin
 		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU)
 		{
 			controller.reassertNativeVisibility();
+		}
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		// Leaving the world (logout, world-hop, disconnect) tears down the interface widget tree, including the
+		// head container we created under the interface root. Our reference survives but is now detached, and
+		// renderHead()'s parent-id guard can't tell (the root's packed id is identical across logins), so it
+		// would reuse the orphaned container and the head would never render. Drop it so the next renderHead()
+		// rebuilds on the fresh post-login root.
+		final GameState state = event.getGameState();
+		if (state == GameState.LOGIN_SCREEN || state == GameState.HOPPING || state == GameState.CONNECTION_LOST)
+		{
+			controller.resetHead();
 		}
 	}
 
