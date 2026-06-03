@@ -9,6 +9,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
@@ -88,6 +89,18 @@ public class ImmersiveDialoguePlugin extends Plugin
 		if (state == GameState.LOGIN_SCREEN || state == GameState.HOPPING || state == GameState.CONNECTION_LOST)
 		{
 			controller.resetHead();
+		}
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		// "Reset position" is a momentary toggle: when switched on, recentre the box and switch it back off.
+		if (ImmersiveDialogueConfig.GROUP.equals(event.getGroup())
+			&& "resetPosition".equals(event.getKey())
+			&& "true".equals(event.getNewValue()))
+		{
+			controller.resetPosition();
 		}
 	}
 

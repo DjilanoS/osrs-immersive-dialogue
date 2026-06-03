@@ -44,38 +44,41 @@ Helper's own highlight color is used only to detect which option to mark.
 
 ## Interaction
 
-**All interaction is native.** You drive the dialogue exactly as you always have:
+Drive the relocated dialogue however you like — **click or keyboard, both work**:
 
-- **Esc** — close / exit the dialogue (RuneLite's native "Escape closes
-  interfaces" behavior).
-- **Spacebar** — continue to the next line.
-- **Number keys 1–5** — select an option. The relocated panel numbers each
-  option so it's obvious which key picks which.
-
-> **Why can't I click options?** 
-> Routing a click into the conversation would mean
-> *synthesizing a menu action*, which sends a packet to the game server. The Plugin
-> Hub rules forbid injecting input and forbid menu entries that send actions to the
-> server, so Immersive Dialogue deliberately does not do it.
+- **Click the panel** to continue to the next line (it shows a *Click to continue* hint).
+- **Click an option** to choose it. Options highlight as you hover over them.
+- **Spacebar** still continues, and **number keys 1–5** still select an option —
+  each option is numbered so it's obvious which key picks which.
+- **Esc** closes the dialogue (RuneLite's native "Escape closes interfaces").
+- **Alt + drag** the panel to reposition it anywhere on screen when *Enable drag mode*
+  is on (see below). The new spot is saved automatically.
 
 ## Customization
 
 Every setting lives under **Immersive Dialogue** in the RuneLite config panel,
-grouped into four sections.
+grouped into five sections.
 
 <img src="docs/immersive-dialogue-options.jpg" alt="Immersive Dialogue configuration panel" width="260">
+
+### General
+| Setting | What it does | Default |
+| --- | --- | --- |
+| **Animate head** | Play the talking head animation instead of a static head. | on |
 
 ### Position
 | Setting | What it does | Default |
 | --- | --- | --- |
-| **Bottom margin** | Distance of the panel from the bottom edge of the screen (0–800 px). | 24 |
-| **Horizontal offset** | Shift the panel left (negative) or right (positive) from center (-960–960 px). | 0 |
+| **Enable drag mode** | Hold **Alt** and drag the panel to reposition it; the new spot is saved into Bottom margin / Horizontal offset. | on |
+| **Bottom margin** | Distance of the panel from the bottom edge of the screen (0–2160 px). | 150 |
+| **Horizontal offset** | Shift the panel left (negative) or right (positive) from center (-1920–1920 px). | 0 |
+| **Reset position** | Click to move the panel back to its default position; it clears itself straight after. | off |
 
 ### Dialogue appearance
 | Setting | What it does | Default |
 | --- | --- | --- |
 | **Backdrop color** | Color and opacity of the translucent panel. | dark brown, translucent |
-| **Backdrop padding** | Padding around the text inside the panel (0–64 px). | 12 |
+| **Backdrop padding** | Padding around the text inside the panel (0–64 px). | 4 |
 | **Text color** | Body text and option color. | white |
 | **Text size** | Body / option font size (12–28 px). | 16 |
 | **Name color** | Speaker name color. | gold |
@@ -89,7 +92,7 @@ grouped into four sections.
 ### Avatar appearance
 | Setting | What it does | Default |
 | --- | --- | --- |
-| **Avatar backdrop** | Draw a colored panel behind the chat-head. | off |
+| **Avatar backdrop** | Draw a colored panel behind the chat-head. | on |
 | **Avatar color** | Color and opacity of that panel. | dark brown, translucent |
 
 ### Transitions
