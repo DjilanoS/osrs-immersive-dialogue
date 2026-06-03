@@ -10,6 +10,7 @@ import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
+import net.runelite.api.MenuAction;
 import net.runelite.api.Point;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
@@ -65,6 +66,19 @@ class DialogueWidgetController
 		}
 	}
 
+	/** A clickable option's native child index ({@code subid}) and the on-screen rectangle the overlay drew it in. */
+	static final class OptionHit
+	{
+		final int subid;
+		final Rectangle rect;
+
+		OptionHit(int subid, Rectangle rect)
+		{
+			this.subid = subid;
+			this.rect = rect;
+		}
+	}
+
 	// Approximate native dialogue size; used for the bottom-center backdrop box.
 	private static final int BOX_W = 506;
 	private static final int BOX_H = 155;
@@ -78,6 +92,8 @@ class DialogueWidgetController
 	private static final int OPACITY_TRANSPARENT = 255;
 	/** Below this the fade-out is treated as complete and the dialogue is fully cleared. */
 	private static final float ALPHA_EPSILON = 0.01f;
+	/** Animation id meaning "no animation" — a static head. */
+	private static final int NO_ANIM = -1;
 
 	// Adaptive OPTIONS box sizing. The per-row text-height allowance is the configured text size plus this
 	// buffer, over-estimating the runescape body line height so the box always covers the option rows the
@@ -102,6 +118,11 @@ class DialogueWidgetController
 	private String bodyText;
 	@Getter
 	private List<Option> options = Collections.emptyList();
+	/** Per-option click target rectangles published for the mouse listener; empty unless OPTIONS is open. */
+	@Getter
+	private volatile List<OptionHit> optionHits = Collections.emptyList();
+	/** True while the open dialogue is a player (right) line, so {@link #continueDialogue()} targets the right CONTINUE. */
+	private volatile boolean playerSpeaker;
 
 	/** Canvas rectangle of the relocated head this frame (for click-blocking), or {@code null}. */
 	@Getter
@@ -125,6 +146,13 @@ class DialogueWidgetController
 	private volatile float displayAlpha = 0f;
 	/** Wall-clock of the previous frame, used to advance the fade independent of frame rate. */
 	private long lastFrameMs = 0L;
+
+	/** ALT-drag state: the active flag, the offsets snapshotted at press, and the cumulative pixel delta. */
+	private volatile boolean dragActive;
+	private volatile int dragBaseHorizontalOffset;
+	private volatile int dragBaseBottomMargin;
+	private volatile int dragDx;
+	private volatile int dragDy;
 
 	@Inject
 	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager)
@@ -186,7 +214,14 @@ class DialogueWidgetController
 		speakerName = null;
 		bodyText = null;
 		options = Collections.emptyList();
+		// The overlay maintains optionHits during OPTIONS (refreshed each render); clearing it per-frame here
+		// would race the click thread. Only clear it when there are no options.
+		if (detected != Kind.OPTIONS)
+		{
+			optionHits = Collections.emptyList();
+		}
 		headSource = null;
+		playerSpeaker = isPlayer;
 		kind = detected;
 
 		switch (detected)
@@ -213,8 +248,8 @@ class DialogueWidgetController
 		final int ch = client.getCanvasHeight();
 		// Options grow the box to fit their count; plain dialogue keeps the fixed height.
 		final int boxH = (kind == Kind.OPTIONS) ? optionsBoxHeight() : BOX_H;
-		final int x = ((cw - BOX_W) / 2) + config.horizontalOffset();
-		final int y = ch - boxH - config.bottomMargin();
+		final int x = ((cw - BOX_W) / 2) + effectiveHorizontalOffset();
+		final int y = ch - boxH - effectiveBottomMargin();
 		bounds = new Rectangle(x, y, BOX_W, boxH);
 
 		if (headSource != null && headSource.getModelType() > 0)
@@ -296,6 +331,7 @@ class DialogueWidgetController
 		speakerName = null;
 		bodyText = null;
 		options = Collections.emptyList();
+		optionHits = Collections.emptyList();
 		headSource = null;
 		hideHead();
 	}
@@ -324,6 +360,85 @@ class DialogueWidgetController
 		// Reserve a line at the bottom for the "Use keys [1] - [N]" hint (drawn in the body font).
 		h += config.textSize() + OPTION_TEXT_BUFFER + ImmersiveDialogueOverlay.LINE_GAP;
 		return Math.min(h, OPTIONS_MAX_H);
+	}
+
+	/** Publishes the per-option click targets the overlay computed this frame (read by the mouse listener). */
+	void setOptionHits(List<OptionHit> hits)
+	{
+		optionHits = hits == null ? Collections.emptyList() : hits;
+	}
+
+	/** Begins an ALT-drag: snapshot the current Position offsets so {@link #dragBy} deltas move from here. */
+	void beginDrag()
+	{
+		dragBaseHorizontalOffset = config.horizontalOffset();
+		dragBaseBottomMargin = config.bottomMargin();
+		dragDx = 0;
+		dragDy = 0;
+		dragActive = true;
+	}
+
+	/** Updates the in-progress drag with the cumulative pixel delta from the press point. */
+	void dragBy(int dx, int dy)
+	{
+		dragDx = dx;
+		dragDy = dy;
+	}
+
+	/** Ends an ALT-drag, persisting the moved position to the Position config so it survives the next frame. */
+	void endDrag()
+	{
+		final int h = effectiveHorizontalOffset();
+		final int b = effectiveBottomMargin();
+		configManager.setConfiguration(ImmersiveDialogueConfig.GROUP, "horizontalOffset", h);
+		configManager.setConfiguration(ImmersiveDialogueConfig.GROUP, "bottomMargin", b);
+		dragActive = false;
+	}
+
+	/** Resets the box to its default position by clearing the saved Position overrides (defaults then reapply). */
+	void resetPosition()
+	{
+		configManager.unsetConfiguration(ImmersiveDialogueConfig.GROUP, "horizontalOffset");
+		configManager.unsetConfiguration(ImmersiveDialogueConfig.GROUP, "bottomMargin");
+		configManager.setConfiguration(ImmersiveDialogueConfig.GROUP, "resetPosition", false);
+	}
+
+	/** Live drag value while dragging (clamped to keep the box on-screen), else the configured offset. */
+	private int effectiveHorizontalOffset()
+	{
+		final int max = Math.max(0, (client.getCanvasWidth() - BOX_W) / 2);
+		final int offset = dragActive ? (dragBaseHorizontalOffset + dragDx) : config.horizontalOffset();
+		return clamp(offset, -max, max);
+	}
+
+	/** Live drag value while dragging (clamped to keep the box on-screen), else the configured margin. */
+	private int effectiveBottomMargin()
+	{
+		final int max = Math.max(0, client.getCanvasHeight() - BOX_H);
+		final int margin = dragActive ? (dragBaseBottomMargin - dragDy) : config.bottomMargin();
+		return clamp(margin, 0, max);
+	}
+
+	private static int clamp(int v, int min, int max)
+	{
+		return v < min ? min : (v > max ? max : v);
+	}
+
+	/** Advances the relocated NPC/player dialogue via its CONTINUE widget; must be invoked on the client thread. */
+	void continueDialogue()
+	{
+		if (kind != Kind.NPC && kind != Kind.PLAYER)
+		{
+			return;
+		}
+		final int continueId = playerSpeaker ? InterfaceID.ChatRight.CONTINUE : InterfaceID.ChatLeft.CONTINUE;
+		final Widget cont = client.getWidget(continueId);
+		if (cont == null)
+		{
+			// Final line / no continue button present (or already closed mid-fade): nothing to advance.
+			return;
+		}
+		client.menuAction(-1, continueId, MenuAction.WIDGET_CONTINUE, 1, -1, "Continue", "");
 	}
 
 	/** True if the canvas point is over the dialogue box (incl. backdrop padding) or the head beside it. */
@@ -659,7 +774,7 @@ class DialogueWidgetController
 
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
-			final int animation = src.getAnimationId();
+			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
 
 			if (createdHead == null
 				|| modelType != builtModelType

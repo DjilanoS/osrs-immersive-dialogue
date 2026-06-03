@@ -15,6 +15,13 @@ public interface ImmersiveDialogueConfig extends Config
 	String GROUP = "immersivedialogue";
 
 	@ConfigSection(
+		name = "General",
+		description = "General behaviour for the relocated dialogue.",
+		position = 0
+	)
+	String generalSection = "general";
+
+	@ConfigSection(
 		name = "Position",
 		description = "Where the dialogue box is placed on the screen.",
 		position = 1
@@ -42,7 +49,31 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	String animationSection = "animation";
 
-	@Range(min = 0, max = 800)
+	@ConfigItem(
+		keyName = "animateHead",
+		name = "Animate head",
+		description = "Play the talking head animation instead of a static head.",
+		section = generalSection,
+		position = 0
+	)
+	default boolean animateHead()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "dragMode",
+		name = "Enable drag mode",
+		description = "Hold ALT and drag the dialogue box to reposition it. The dragged position is saved into Bottom margin / Horizontal offset below, which control the box while drag mode is off.",
+		section = positionSection,
+		position = 1
+	)
+	default boolean dragMode()
+	{
+		return true;
+	}
+
+	@Range(min = 0, max = 2160)
 	@Units(Units.PIXELS)
 	@ConfigItem(
 		keyName = "bottomMargin",
@@ -53,10 +84,10 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	default int bottomMargin()
 	{
-		return 24;
+		return 150;
 	}
 
-	@Range(min = -960, max = 960)
+	@Range(min = -1920, max = 1920)
 	@Units(Units.PIXELS)
 	@ConfigItem(
 		keyName = "horizontalOffset",
@@ -68,6 +99,18 @@ public interface ImmersiveDialogueConfig extends Config
 	default int horizontalOffset()
 	{
 		return 0;
+	}
+
+	@ConfigItem(
+		keyName = "resetPosition",
+		name = "Reset position",
+		description = "Click to move the dialogue box back to its default position (re-centred, default bottom margin).",
+		section = positionSection,
+		position = 4
+	)
+	default boolean resetPosition()
+	{
+		return false;
 	}
 
 	@Alpha
@@ -94,7 +137,7 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	default int backdropPadding()
 	{
-		return 12;
+		return 4;
 	}
 
 	@Alpha
@@ -228,7 +271,7 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	default boolean avatarBackground()
 	{
-		return false;
+		return true;
 	}
 
 	@Alpha
