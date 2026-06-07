@@ -32,9 +32,7 @@ class ImmersiveDialogueOverlay extends Overlay
 	static final int LINE_GAP = 3;
 	static final int OPTION_PAD = 7;
 	static final int OPTION_GAP = 8;
-	/** Horizontal padding on each side of the option text inside its hover "button". */
-	private static final int OPTION_HPAD = 14;
-	private static final String CONTINUE_TEXT = "Click to continue";
+	private static final String CONTINUE_TEXT = "Press Space to continue";
 	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
 	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
@@ -106,6 +104,10 @@ class ImmersiveDialogueOverlay extends Overlay
 			{
 				case NPC:
 				case PLAYER:
+				case MESSAGE:
+				case OBJECT:
+					// MESSAGE/OBJECT have no speaker name (null); they draw as body text + the continue hint.
+					// OBJECT additionally shows its item model beside the box (rendered through the head pipeline).
 					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
 					break;
 				case OPTIONS:
@@ -212,6 +214,7 @@ class ImmersiveDialogueOverlay extends Overlay
 		Color nameColor, Color textColor)
 	{
 		final List<Line> lines = new ArrayList<>();
+		int maxKey = 0;
 		for (final DialogueWidgetController.Option option : controller.getOptions())
 		{
 			// Child subid 0 is the "Select an Option" header: render it as the title.
@@ -219,24 +222,34 @@ class ImmersiveDialogueOverlay extends Overlay
 			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
 			final Color color = option.highlighted ? config.questHelperHighlightColor()
 				: (header ? nameColor : textColor);
-			lines.add(new Line(option.text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
+			// Prefix each selectable option with the number key that picks it (native 1-5 handling).
+			final String text = header ? option.text : ("[" + option.subid + "] " + option.text);
+			if (!header)
+			{
+				maxKey = Math.max(maxKey, option.subid);
+			}
+			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
-		controller.setOptionHits(drawTextBlock(g, b, lines));
+		drawTextBlock(g, b, lines);
+		if (maxKey > 0)
+		{
+			// Tell the player which number keys drive the options (optionsBoxHeight reserves this line).
+			final String hint = maxKey == 1 ? "Use key [1]" : ("Use keys [1] - [" + maxKey + "]");
+			drawBottomHint(g, b, bodyFont, hint);
+		}
 	}
 
 	/**
-	 * Draws the lines top-aligned and horizontally centered. Option rows (non-negative subid) record a
-	 * full-width hit rectangle and get a hover highlight; the returned hit rects are published by {@link #drawOptions}.
+	 * Draws the lines top-aligned and horizontally centered. Option rows (non-negative subid) get extra
+	 * vertical padding so the numbered choices are comfortably spaced.
 	 */
-	private List<DialogueWidgetController.OptionHit> drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
+	private void drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
 	{
-		final List<DialogueWidgetController.OptionHit> hits = new ArrayList<>();
 		if (lines.isEmpty())
 		{
-			return hits;
+			return;
 		}
 
-		final Point mouse = client.getMouseCanvasPosition();
 		int y = b.y + INSET;
 		for (final Line line : lines)
 		{
@@ -245,21 +258,8 @@ class ImmersiveDialogueOverlay extends Overlay
 
 			if (line.subid >= 0)
 			{
-				// Clickable option: a padded, comfortably-spaced hover/hit row.
+				// Option row: padded and comfortably spaced.
 				final int rowH = fm.getAscent() + fm.getDescent() + (OPTION_PAD * 2);
-				final Rectangle hit = new Rectangle(b.x, y, b.width, rowH);
-				if (mouse != null && hit.contains(mouse.getX(), mouse.getY()))
-				{
-					// Hover "button" sized to the text (capped to the row width); the hit rect stays full-width.
-					final int bw = Math.min(hit.width - INSET, fm.stringWidth(line.text) + (OPTION_HPAD * 2));
-					final int bx = hit.x + ((hit.width - bw) / 2);
-					g.setColor(hoverFill());
-					g.fillRoundRect(bx, hit.y, bw, hit.height, 8, 8);
-					g.setColor(config.borderColor());
-					g.drawRoundRect(bx, hit.y, bw, hit.height, 8, 8);
-				}
-				hits.add(new DialogueWidgetController.OptionHit(line.subid, hit));
-
 				final int baseline = y + OPTION_PAD + fm.getAscent();
 				g.setFont(line.font);
 				g.setColor(Color.BLACK);
@@ -281,26 +281,6 @@ class ImmersiveDialogueOverlay extends Overlay
 				y += fm.getDescent() + LINE_GAP;
 			}
 		}
-		return hits;
-	}
-
-	/** A lighter (dark backdrop) or darker (light backdrop) shade of the backdrop, keeping its alpha. */
-	private Color hoverFill()
-	{
-		final Color bg = config.backgroundColor();
-		final double luminance = (0.299 * bg.getRed()) + (0.587 * bg.getGreen()) + (0.114 * bg.getBlue());
-		final int target = luminance < 128 ? 255 : 0;
-		return new Color(
-			blend(bg.getRed(), target),
-			blend(bg.getGreen(), target),
-			blend(bg.getBlue(), target),
-			bg.getAlpha());
-	}
-
-	/** Blends a colour channel ~30% toward {@code target} (white or black) for the hover shade. */
-	private static int blend(int channel, int target)
-	{
-		return (int) Math.round(channel + ((target - channel) * 0.3));
 	}
 
 	private static List<String> wrap(String text, FontMetrics fm, int maxWidth)

@@ -15,6 +15,20 @@ from where the conversation is actually happening. Immersive Dialogue mirrors th
 active conversation into a centered panel that sits where a modern RPG would put
 it, and renders the speaker's animated head next to the text.
 
+## What gets relocated
+
+Every kind of chatbox dialogue is moved to the centered panel:
+
+- **NPC dialogue** — the speaker's name, text, and live animated chat-head.
+- **Your dialogue** — your own character's lines, with your chat-head.
+- **Multiple-choice options** — each option is numbered so you can pick it with the
+  matching number key.
+- **System & quest message boxes** — the *"Click here to continue"* narration
+  (e.g. *Hetty closes her eyes and begins to chant. The cauldron bubbles mysteriously.*),
+  shown with no head.
+- **Item "show" messages** — e.g. *You show the cup to Junior Jim.*, with the item's
+  picture kept beside the text.
+
 ## The difference: a chat-head that isn't cut off
 
 Look closely at the **native** OSRS chatbox and you'll notice the animated
@@ -44,12 +58,11 @@ Helper's own highlight color is used only to detect which option to mark.
 
 ## Interaction
 
-Drive the relocated dialogue however you like — **click or keyboard, both work**:
+The relocated dialogue is driven entirely by the keyboard, exactly like the native chatbox:
 
-- **Click the panel** to continue to the next line (it shows a *Click to continue* hint).
-- **Click an option** to choose it. Options highlight as you hover over them.
-- **Spacebar** still continues, and **number keys 1–5** still select an option —
-  each option is numbered so it's obvious which key picks which.
+- **Spacebar** continues to the next line (the panel shows a *Press Space to continue* hint).
+- **Number keys** select an option — each option is prefixed with the key that picks it
+  (`[1]`, `[2]`, …), and the panel shows a *Use keys [1] - [N]* hint.
 - **Esc** closes the dialogue (RuneLite's native "Escape closes interfaces").
 - **Alt + drag** the panel to reposition it anywhere on screen when *Enable drag mode*
   is on (see below). The new spot is saved automatically.
