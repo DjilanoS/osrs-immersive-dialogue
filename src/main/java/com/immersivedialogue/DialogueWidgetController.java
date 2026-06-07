@@ -10,7 +10,6 @@ import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.MenuAction;
 import net.runelite.api.Point;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
@@ -45,7 +44,7 @@ class DialogueWidgetController
 {
 	enum Kind
 	{
-		NONE, NPC, PLAYER, OPTIONS
+		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT
 	}
 
 	/**
@@ -63,19 +62,6 @@ class DialogueWidgetController
 			this.subid = subid;
 			this.text = text;
 			this.highlighted = highlighted;
-		}
-	}
-
-	/** A clickable option's native child index ({@code subid}) and the on-screen rectangle the overlay drew it in. */
-	static final class OptionHit
-	{
-		final int subid;
-		final Rectangle rect;
-
-		OptionHit(int subid, Rectangle rect)
-		{
-			this.subid = subid;
-			this.rect = rect;
 		}
 	}
 
@@ -118,11 +104,6 @@ class DialogueWidgetController
 	private String bodyText;
 	@Getter
 	private List<Option> options = Collections.emptyList();
-	/** Per-option click target rectangles published for the mouse listener; empty unless OPTIONS is open. */
-	@Getter
-	private volatile List<OptionHit> optionHits = Collections.emptyList();
-	/** True while the open dialogue is a player (right) line, so {@link #continueDialogue()} targets the right CONTINUE. */
-	private volatile boolean playerSpeaker;
 
 	/** Canvas rectangle of the relocated head this frame (for click-blocking), or {@code null}. */
 	@Getter
@@ -139,6 +120,7 @@ class DialogueWidgetController
 
 	private int builtModelType = Integer.MIN_VALUE;
 	private int builtModelId = Integer.MIN_VALUE;
+	private int builtItemId = Integer.MIN_VALUE;
 	private int builtAnimation = Integer.MIN_VALUE;
 
 	/** Eased 0..1 visibility the overlay multiplies into its alpha, and the head mirrors as opacity. */
@@ -191,6 +173,16 @@ class DialogueWidgetController
 		{
 			detected = Kind.OPTIONS;
 		}
+		else if (visible(client.getWidget(InterfaceID.Messagebox.UNIVERSE)))
+		{
+			// Plain "click to continue" message box (quest / system narration): no speaker, no head.
+			detected = Kind.MESSAGE;
+		}
+		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
+		{
+			// Item message box ("You show the X to Y."): an item model + text, no speaker.
+			detected = Kind.OBJECT;
+		}
 		final boolean open = detected != Kind.NONE;
 
 		updateAlpha(open, dt);
@@ -214,14 +206,7 @@ class DialogueWidgetController
 		speakerName = null;
 		bodyText = null;
 		options = Collections.emptyList();
-		// The overlay maintains optionHits during OPTIONS (refreshed each render); clearing it per-frame here
-		// would race the click thread. Only clear it when there are no options.
-		if (detected != Kind.OPTIONS)
-		{
-			optionHits = Collections.emptyList();
-		}
 		headSource = null;
-		playerSpeaker = isPlayer;
 		kind = detected;
 
 		switch (detected)
@@ -239,6 +224,16 @@ class DialogueWidgetController
 			case OPTIONS:
 				// Read option text while the widgets are still in their natural state (before hideNative).
 				options = readOptions(client.getWidget(InterfaceID.Chatmenu.OPTIONS));
+				break;
+			case MESSAGE:
+				// Plain narration box: just the body text, no speaker name and no head.
+				bodyText = text(InterfaceID.Messagebox.TEXT);
+				break;
+			case OBJECT:
+				// Item message box: relocate the item model (rendered like a head) beside the text. Its TEXT
+				// widget bakes in the "Click here to continue" line, so strip that before redrawing.
+				headSource = client.getWidget(InterfaceID.Objectbox.ITEM);
+				bodyText = stripContinuePrompt(text(InterfaceID.Objectbox.TEXT));
 				break;
 			default:
 				break;
@@ -331,7 +326,6 @@ class DialogueWidgetController
 		speakerName = null;
 		bodyText = null;
 		options = Collections.emptyList();
-		optionHits = Collections.emptyList();
 		headSource = null;
 		hideHead();
 	}
@@ -360,12 +354,6 @@ class DialogueWidgetController
 		// Reserve a line at the bottom for the "Use keys [1] - [N]" hint (drawn in the body font).
 		h += config.textSize() + OPTION_TEXT_BUFFER + ImmersiveDialogueOverlay.LINE_GAP;
 		return Math.min(h, OPTIONS_MAX_H);
-	}
-
-	/** Publishes the per-option click targets the overlay computed this frame (read by the mouse listener). */
-	void setOptionHits(List<OptionHit> hits)
-	{
-		optionHits = hits == null ? Collections.emptyList() : hits;
 	}
 
 	/** Begins an ALT-drag: snapshot the current Position offsets so {@link #dragBy} deltas move from here. */
@@ -422,23 +410,6 @@ class DialogueWidgetController
 	private static int clamp(int v, int min, int max)
 	{
 		return v < min ? min : (v > max ? max : v);
-	}
-
-	/** Advances the relocated NPC/player dialogue via its CONTINUE widget; must be invoked on the client thread. */
-	void continueDialogue()
-	{
-		if (kind != Kind.NPC && kind != Kind.PLAYER)
-		{
-			return;
-		}
-		final int continueId = playerSpeaker ? InterfaceID.ChatRight.CONTINUE : InterfaceID.ChatLeft.CONTINUE;
-		final Widget cont = client.getWidget(continueId);
-		if (cont == null)
-		{
-			// Final line / no continue button present (or already closed mid-fade): nothing to advance.
-			return;
-		}
-		client.menuAction(-1, continueId, MenuAction.WIDGET_CONTINUE, 1, -1, "Continue", "");
 	}
 
 	/** True if the canvas point is over the dialogue box (incl. backdrop padding) or the head beside it. */
@@ -547,13 +518,24 @@ class DialogueWidgetController
 			// highlight into our box. Compare masked to 24 bits: getTextColor() carries no alpha byte.
 			final boolean highlighted = questHelperColor != null && subid != 0
 				&& (c.getTextColor() & 0xFFFFFF) == (questHelperColor.getRGB() & 0xFFFFFF);
-			if (highlighted)
-			{
-				// Quest Helper prepends "[N] " numbering to the highlighted option only; drop it.
-				t = t.replaceFirst("^\\s*\\[\\d+\\]\\s*", "");
-			}
+			// Strip any leading "[N] " prefix (e.g. Quest Helper numbers the correct option) so the
+			// overlay's own uniform 1-5 numbering can't produce a double "[1] [1] …".
+			t = t.replaceFirst("^\\s*\\[\\d+\\]\\s*", "");
 			out.add(new Option(subid, t, highlighted));
 		}
+	}
+
+	/**
+	 * Remove a trailing "Click here to continue" prompt that the item message box bakes into its body text
+	 * (its {@code TEXT} widget holds the message and the prompt together, with no separate continue component).
+	 */
+	private static String stripContinuePrompt(String text)
+	{
+		if (text == null)
+		{
+			return null;
+		}
+		return text.replaceFirst("(?is)\\s*click here to continue\\.?\\s*$", "").trim();
 	}
 
 	/** Strip OSRS markup; convert {@code <br>} to newlines. */
@@ -603,6 +585,17 @@ class DialogueWidgetController
 			case OPTIONS:
 				// Dim (not hide) the option list so native number-key (1-5) / click selection still works.
 				dim(InterfaceID.Chatmenu.OPTIONS);
+				break;
+			case MESSAGE:
+				// Hide the narration we redraw; dim (not hide) CONTINUE so native spacebar / click still advance it.
+				hide(InterfaceID.Messagebox.TEXT);
+				dim(InterfaceID.Messagebox.CONTINUE);
+				break;
+			case OBJECT:
+				// Hide the item model we redraw; DIM (not hide) TEXT — its baked-in "Click here to continue" is
+				// the continue target, so it must stay interactive for native spacebar / click to advance.
+				hide(InterfaceID.Objectbox.ITEM);
+				dim(InterfaceID.Objectbox.TEXT);
 				break;
 			default:
 				break;
@@ -716,6 +709,14 @@ class DialogueWidgetController
 		{
 			detected = Kind.OPTIONS;
 		}
+		else if (visible(client.getWidget(InterfaceID.Messagebox.UNIVERSE)))
+		{
+			detected = Kind.MESSAGE;
+		}
+		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
+		{
+			detected = Kind.OBJECT;
+		}
 		if (detected != Kind.NONE)
 		{
 			hideNative(detected);
@@ -756,6 +757,7 @@ class DialogueWidgetController
 				createdHead = null;
 				builtModelType = Integer.MIN_VALUE;
 				builtModelId = Integer.MIN_VALUE;
+				builtItemId = Integer.MIN_VALUE;
 				builtAnimation = Integer.MIN_VALUE;
 			}
 
@@ -774,11 +776,15 @@ class DialogueWidgetController
 
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
+			// Item display widgets (the object box) carry their picture on itemId, not modelId.
+			final int itemId = src.getItemId();
+			final int itemQuantity = src.getItemQuantity() > 0 ? src.getItemQuantity() : 1;
 			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
 
 			if (createdHead == null
 				|| modelType != builtModelType
 				|| modelId != builtModelId
+				|| itemId != builtItemId
 				|| animation != builtAnimation)
 			{
 				// Head or animation changed: recreate the MODEL widget so it starts at modelFrame 0.
@@ -814,11 +820,14 @@ class DialogueWidgetController
 				createdHead.setRotationZ(src.getRotationZ());
 				createdHead.setModelType(modelType);
 				createdHead.setModelId(modelId);
+				createdHead.setItemId(itemId);
+				createdHead.setItemQuantity(itemQuantity);
 				createdHead.setAnimationId(animation);
 				createdHead.revalidate();
 
 				builtModelType = modelType;
 				builtModelId = modelId;
+				builtItemId = itemId;
 				builtAnimation = animation;
 			}
 			else
@@ -869,6 +878,7 @@ class DialogueWidgetController
 		createdHead = null;
 		builtModelType = Integer.MIN_VALUE;
 		builtModelId = Integer.MIN_VALUE;
+		builtItemId = Integer.MIN_VALUE;
 		builtAnimation = Integer.MIN_VALUE;
 	}
 
@@ -892,6 +902,7 @@ class DialogueWidgetController
 		}
 		builtModelType = Integer.MIN_VALUE;
 		builtModelId = Integer.MIN_VALUE;
+		builtItemId = Integer.MIN_VALUE;
 		builtAnimation = Integer.MIN_VALUE;
 	}
 

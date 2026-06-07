@@ -71,7 +71,8 @@ public class ImmersiveDialoguePlugin extends Plugin
 		// native display widgets we hide; re-apply our hiding the instant the interface reloads so the
 		// relocated box does not flash for one frame before the next BeforeRender catches it.
 		final int group = event.getGroupId();
-		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU)
+		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU
+			|| group == InterfaceID.MESSAGEBOX || group == InterfaceID.OBJECTBOX)
 		{
 			controller.reassertNativeVisibility();
 		}
