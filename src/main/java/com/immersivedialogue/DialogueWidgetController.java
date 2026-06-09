@@ -801,13 +801,17 @@ class DialogueWidgetController
 			final int ox = hostLoc != null ? hostLoc.getX() : 0;
 			final int oy = hostLoc != null ? hostLoc.getY() : 0;
 			// Position and size come from the scaled headBounds computed in apply() (single source of truth).
-			// The model zoom must scale with the viewport, or shrinking the widget would crop the model
-			// instead of drawing it smaller (and enlarging would leave it floating in an oversized box).
+			// A MODEL widget's zoom is the camera DISTANCE, so the rendered head size is INVERSELY
+			// proportional to it: a larger zoom pushes the head further away (smaller), a smaller zoom
+			// pulls it closer (bigger). To shrink the head in step with the box we therefore DIVIDE the
+			// native zoom by the scale — multiplying (as a viewport-style scale would suggest) enlarges the
+			// head below 100%, which is what left it oversized. At 100% the native zoom is left untouched.
 			final int hx = head.x;
 			final int hy = head.y;
 			final int headW = head.width;
 			final int headH = head.height;
-			final int zoom = scaled(src.getModelZoom() > 0 ? src.getModelZoom() : 512, scale());
+			final int baseZoom = src.getModelZoom() > 0 ? src.getModelZoom() : 512;
+			final int zoom = Math.round(baseZoom / scale());
 
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
