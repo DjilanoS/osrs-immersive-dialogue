@@ -241,18 +241,24 @@ class DialogueWidgetController
 
 		final int cw = client.getCanvasWidth();
 		final int ch = client.getCanvasHeight();
-		// Options grow the box to fit their count; plain dialogue keeps the fixed height.
-		final int boxH = (kind == Kind.OPTIONS) ? optionsBoxHeight() : BOX_H;
-		final int x = ((cw - BOX_W) / 2) + effectiveHorizontalOffset();
+		final float s = scale();
+		final int boxW = scaled(BOX_W, s);
+		// Options grow the box to fit their count (already scaled inside optionsBoxHeight); plain dialogue
+		// keeps the fixed, scaled height.
+		final int boxH = (kind == Kind.OPTIONS) ? optionsBoxHeight() : scaled(BOX_H, s);
+		final int x = ((cw - boxW) / 2) + effectiveHorizontalOffset();
 		final int y = ch - boxH - effectiveBottomMargin();
-		bounds = new Rectangle(x, y, BOX_W, boxH);
+		bounds = new Rectangle(x, y, boxW, boxH);
 
 		if (headSource != null && headSource.getModelType() > 0)
 		{
-			final int hx = isPlayer ? (bounds.x + bounds.width + HEAD_GAP) : (bounds.x - HEAD_W - HEAD_GAP);
-			final int hy = bounds.y + ((bounds.height - HEAD_H) / 2);
-			headBounds = new Rectangle(hx, hy, HEAD_W, HEAD_H);
-			renderHead(headSource, isPlayer, bounds);
+			final int headW = scaled(HEAD_W, s);
+			final int headH = scaled(HEAD_H, s);
+			final int gap = scaled(HEAD_GAP, s);
+			final int hx = isPlayer ? (bounds.x + bounds.width + gap) : (bounds.x - headW - gap);
+			final int hy = bounds.y + ((bounds.height - headH) / 2);
+			headBounds = new Rectangle(hx, hy, headW, headH);
+			renderHead(headSource, headBounds);
 		}
 		else
 		{
@@ -338,22 +344,33 @@ class DialogueWidgetController
 	 */
 	private int optionsBoxHeight()
 	{
-		int h = ImmersiveDialogueOverlay.INSET * 2; // top + bottom padding
+		// Scale every term by the same factor the overlay uses to draw, with the same font floor, so the
+		// computed box height always matches the rows actually rendered (see ImmersiveDialogueOverlay).
+		final float s = scale();
+		final int titlePx = Math.max(ImmersiveDialogueOverlay.MIN_FONT_PX, scaled(config.titleFontSize(), s));
+		final int bodyPx = Math.max(ImmersiveDialogueOverlay.MIN_FONT_PX, scaled(config.textSize(), s));
+		final int inset = scaled(ImmersiveDialogueOverlay.INSET, s);
+		final int lineGap = scaled(ImmersiveDialogueOverlay.LINE_GAP, s);
+		final int optPad = scaled(ImmersiveDialogueOverlay.OPTION_PAD, s);
+		final int optGap = scaled(ImmersiveDialogueOverlay.OPTION_GAP, s);
+		final int textBuf = scaled(OPTION_TEXT_BUFFER, s);
+
+		int h = inset * 2; // top + bottom padding
 		for (final Option o : options)
 		{
 			if (o.subid == 0)
 			{
 				// "Select an Option" header, drawn in the larger title font as a plain line.
-				h += (config.titleFontSize() + 6) + ImmersiveDialogueOverlay.LINE_GAP;
+				h += (titlePx + scaled(6, s)) + lineGap;
 			}
 			else
 			{
-				h += (config.textSize() + OPTION_TEXT_BUFFER) + (ImmersiveDialogueOverlay.OPTION_PAD * 2) + ImmersiveDialogueOverlay.OPTION_GAP;
+				h += (bodyPx + textBuf) + (optPad * 2) + optGap;
 			}
 		}
 		// Reserve a line at the bottom for the "Use keys [1] - [N]" hint (drawn in the body font).
-		h += config.textSize() + OPTION_TEXT_BUFFER + ImmersiveDialogueOverlay.LINE_GAP;
-		return Math.min(h, OPTIONS_MAX_H);
+		h += bodyPx + textBuf + lineGap;
+		return Math.min(h, scaled(OPTIONS_MAX_H, s));
 	}
 
 	/** Begins an ALT-drag: snapshot the current Position offsets so {@link #dragBy} deltas move from here. */
@@ -394,7 +411,7 @@ class DialogueWidgetController
 	/** Live drag value while dragging (clamped to keep the box on-screen), else the configured offset. */
 	private int effectiveHorizontalOffset()
 	{
-		final int max = Math.max(0, (client.getCanvasWidth() - BOX_W) / 2);
+		final int max = Math.max(0, (client.getCanvasWidth() - scaled(BOX_W, scale())) / 2);
 		final int offset = dragActive ? (dragBaseHorizontalOffset + dragDx) : config.horizontalOffset();
 		return clamp(offset, -max, max);
 	}
@@ -402,7 +419,7 @@ class DialogueWidgetController
 	/** Live drag value while dragging (clamped to keep the box on-screen), else the configured margin. */
 	private int effectiveBottomMargin()
 	{
-		final int max = Math.max(0, client.getCanvasHeight() - BOX_H);
+		final int max = Math.max(0, client.getCanvasHeight() - scaled(BOX_H, scale()));
 		final int margin = dragActive ? (dragBaseBottomMargin - dragDy) : config.bottomMargin();
 		return clamp(margin, 0, max);
 	}
@@ -410,6 +427,18 @@ class DialogueWidgetController
 	private static int clamp(int v, int min, int max)
 	{
 		return v < min ? min : (v > max ? max : v);
+	}
+
+	/** Current dialogue scale factor (1.0 = 100%). */
+	private float scale()
+	{
+		return config.scalePercent() / 100f;
+	}
+
+	/** A base constant scaled by {@code s}. Mirrors ImmersiveDialogueOverlay.scaled so the two never drift. */
+	private static int scaled(int v, float s)
+	{
+		return Math.round(v * s);
 	}
 
 	/** True if the canvas point is over the dialogue box (incl. backdrop padding) or the head beside it. */
@@ -723,7 +752,7 @@ class DialogueWidgetController
 		}
 	}
 
-	private void renderHead(Widget src, boolean isPlayer, Rectangle box)
+	private void renderHead(Widget src, Rectangle head)
 	{
 		final Widget parent = topAncestor(src);
 		if (parent == null)
@@ -771,8 +800,18 @@ class DialogueWidgetController
 			final Point hostLoc = parent.getCanvasLocation();
 			final int ox = hostLoc != null ? hostLoc.getX() : 0;
 			final int oy = hostLoc != null ? hostLoc.getY() : 0;
-			final int hx = isPlayer ? (box.x + box.width + HEAD_GAP) : (box.x - HEAD_W - HEAD_GAP);
-			final int hy = box.y + ((box.height - HEAD_H) / 2);
+			// Position and size come from the scaled headBounds computed in apply() (single source of truth).
+			// A MODEL widget's zoom is the camera DISTANCE, so the rendered head size is INVERSELY
+			// proportional to it: a larger zoom pushes the head further away (smaller), a smaller zoom
+			// pulls it closer (bigger). To shrink the head in step with the box we therefore DIVIDE the
+			// native zoom by the scale — multiplying (as a viewport-style scale would suggest) enlarges the
+			// head below 100%, which is what left it oversized. At 100% the native zoom is left untouched.
+			final int hx = head.x;
+			final int hy = head.y;
+			final int headW = head.width;
+			final int headH = head.height;
+			final int baseZoom = src.getModelZoom() > 0 ? src.getModelZoom() : 512;
+			final int zoom = Math.round(baseZoom / scale());
 
 			final int modelType = src.getModelType();
 			final int modelId = src.getModelId();
@@ -810,11 +849,11 @@ class DialogueWidgetController
 				createdHead = headContainer.createChild(WidgetType.MODEL);
 				createdHead.setXPositionMode(WidgetPositionMode.ABSOLUTE_LEFT);
 				createdHead.setYPositionMode(WidgetPositionMode.ABSOLUTE_TOP);
-				createdHead.setOriginalWidth(HEAD_W);
-				createdHead.setOriginalHeight(HEAD_H);
+				createdHead.setOriginalWidth(headW);
+				createdHead.setOriginalHeight(headH);
 				createdHead.setOriginalX(hx - ox);
 				createdHead.setOriginalY(hy - oy);
-				createdHead.setModelZoom(src.getModelZoom() > 0 ? src.getModelZoom() : 512);
+				createdHead.setModelZoom(zoom);
 				createdHead.setRotationX(src.getRotationX());
 				createdHead.setRotationY(src.getRotationY());
 				createdHead.setRotationZ(src.getRotationZ());
@@ -833,11 +872,15 @@ class DialogueWidgetController
 			else
 			{
 				// Same head and animation: only refresh geometry (the box can move via config
-				// offsets / canvas resize). None of these touch the frame counter.
+				// offsets / canvas resize, and the size can change via the scale slider). Resizing in
+				// place (vs. recreating) avoids restarting an animated head's frame counter, so a live
+				// scale change never makes a talking head stutter. None of these touch the frame counter.
 				createdHead.setHidden(false);
+				createdHead.setOriginalWidth(headW);
+				createdHead.setOriginalHeight(headH);
 				createdHead.setOriginalX(hx - ox);
 				createdHead.setOriginalY(hy - oy);
-				createdHead.setModelZoom(src.getModelZoom() > 0 ? src.getModelZoom() : 512);
+				createdHead.setModelZoom(zoom);
 				createdHead.setRotationX(src.getRotationX());
 				createdHead.setRotationY(src.getRotationY());
 				createdHead.setRotationZ(src.getRotationZ());

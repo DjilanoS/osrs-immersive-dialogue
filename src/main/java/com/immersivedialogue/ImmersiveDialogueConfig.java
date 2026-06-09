@@ -22,30 +22,37 @@ public interface ImmersiveDialogueConfig extends Config
 	String generalSection = "general";
 
 	@ConfigSection(
+		name = "Size",
+		description = "Scale the entire dialogue (box, avatar and text) as one unit.",
+		position = 1
+	)
+	String sizeSection = "size";
+
+	@ConfigSection(
 		name = "Position",
 		description = "Where the dialogue box is placed on the screen.",
-		position = 1
+		position = 2
 	)
 	String positionSection = "position";
 
 	@ConfigSection(
 		name = "Dialogue appearance",
 		description = "Backdrop, text and title styling for the dialogue box.",
-		position = 2
+		position = 3
 	)
 	String appearanceSection = "appearance";
 
 	@ConfigSection(
 		name = "Avatar appearance",
 		description = "Backdrop behind the chat-head, plus the box border and corner shape.",
-		position = 3
+		position = 4
 	)
 	String frameSection = "frame";
 
 	@ConfigSection(
 		name = "Transitions",
 		description = "Fade transitions when the dialogue box opens and closes.",
-		position = 4
+		position = 5
 	)
 	String animationSection = "animation";
 
@@ -59,6 +66,20 @@ public interface ImmersiveDialogueConfig extends Config
 	default boolean animateHead()
 	{
 		return true;
+	}
+
+	@Range(min = 50, max = 150)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "scalePercent",
+		name = "Dialogue scale",
+		description = "Scale the whole dialogue - box, avatar and text - as one unit. 100% is the default.",
+		section = sizeSection,
+		position = 0
+	)
+	default int scalePercent()
+	{
+		return 100;
 	}
 
 	@ConfigItem(

@@ -32,6 +32,8 @@ class ImmersiveDialogueOverlay extends Overlay
 	static final int LINE_GAP = 3;
 	static final int OPTION_PAD = 7;
 	static final int OPTION_GAP = 8;
+	/** Lower bound for scaled font sizes so text stays legible at small scales (shared with optionsBoxHeight). */
+	static final int MIN_FONT_PX = 8;
 	private static final String CONTINUE_TEXT = "Press Space to continue";
 	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
 	private static final Color HINT_HOVER_COLOR = Color.WHITE;
@@ -95,8 +97,13 @@ class ImmersiveDialogueOverlay extends Overlay
 			drawPanel(g, b.x - pad, b.y - pad, b.width + (pad * 2), b.height + (pad * 2),
 				radius, config.backgroundColor());
 
-			final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) config.titleFontSize());
-			final Font bodyFont = FontManager.getRunescapeFont().deriveFont((float) config.textSize());
+			// Scale the text with the box: the configured sizes are the 100% reference, multiplied by the
+			// dialogue scale and floored so they stay legible. Spacing constants are scaled at each use site.
+			final float s = scale();
+			final int titlePx = Math.max(MIN_FONT_PX, scaled(config.titleFontSize(), s));
+			final int bodyPx = Math.max(MIN_FONT_PX, scaled(config.textSize(), s));
+			final Font nameFont = FontManager.getRunescapeBoldFont().deriveFont((float) titlePx);
+			final Font bodyFont = FontManager.getRunescapeFont().deriveFont((float) bodyPx);
 			final Color nameColor = config.nameColor();
 			final Color textColor = config.textColor();
 
@@ -108,10 +115,10 @@ class ImmersiveDialogueOverlay extends Overlay
 				case OBJECT:
 					// MESSAGE/OBJECT have no speaker name (null); they draw as body text + the continue hint.
 					// OBJECT additionally shows its item model beside the box (rendered through the head pipeline).
-					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor);
+					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor, s);
 					break;
 				case OPTIONS:
-					drawOptions(g, b, nameFont, bodyFont, nameColor, textColor);
+					drawOptions(g, b, nameFont, bodyFont, nameColor, textColor, s);
 					break;
 				default:
 					break;
@@ -163,10 +170,22 @@ class ImmersiveDialogueOverlay extends Overlay
 		return v < 0f ? 0f : (v > 1f ? 1f : v);
 	}
 
-	private void drawConversation(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
-		Color nameColor, Color textColor)
+	/** Current dialogue scale factor (1.0 = 100%). */
+	private float scale()
 	{
-		final int maxWidth = b.width - (INSET * 2);
+		return config.scalePercent() / 100f;
+	}
+
+	/** A base constant scaled by {@code s}. Mirrors DialogueWidgetController.scaled so the two never drift. */
+	private static int scaled(int v, float s)
+	{
+		return Math.round(v * s);
+	}
+
+	private void drawConversation(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
+		Color nameColor, Color textColor, float s)
+	{
+		final int maxWidth = b.width - (scaled(INSET, s) * 2);
 		final List<Line> lines = new ArrayList<>();
 
 		final String name = controller.getSpeakerName();
@@ -185,8 +204,8 @@ class ImmersiveDialogueOverlay extends Overlay
 			}
 		}
 
-		drawTextBlock(g, b, lines);
-		drawBottomHint(g, b, bodyFont, CONTINUE_TEXT);
+		drawTextBlock(g, b, lines, s);
+		drawBottomHint(g, b, bodyFont, CONTINUE_TEXT, s);
 	}
 
 	/**
@@ -194,11 +213,11 @@ class ImmersiveDialogueOverlay extends Overlay
 	 * it brightens to full white while the cursor is over the dialogue box, drawing attention to the keys that
 	 * drive it.
 	 */
-	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text)
+	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text, float s)
 	{
 		final FontMetrics fm = g.getFontMetrics(font);
 		final int x = b.x + ((b.width - fm.stringWidth(text)) / 2);
-		final int y = b.y + b.height - fm.getDescent() - (INSET / 2);
+		final int y = b.y + b.height - fm.getDescent() - (scaled(INSET, s) / 2);
 
 		final Point mouse = client.getMouseCanvasPosition();
 		final boolean hover = mouse != null && b.contains(mouse.getX(), mouse.getY());
@@ -211,7 +230,7 @@ class ImmersiveDialogueOverlay extends Overlay
 	}
 
 	private void drawOptions(Graphics2D g, Rectangle b, Font nameFont, Font bodyFont,
-		Color nameColor, Color textColor)
+		Color nameColor, Color textColor, float s)
 	{
 		final List<Line> lines = new ArrayList<>();
 		int maxKey = 0;
@@ -230,12 +249,12 @@ class ImmersiveDialogueOverlay extends Overlay
 			}
 			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
-		drawTextBlock(g, b, lines);
+		drawTextBlock(g, b, lines, s);
 		if (maxKey > 0)
 		{
 			// Tell the player which number keys drive the options (optionsBoxHeight reserves this line).
 			final String hint = maxKey == 1 ? "Use key [1]" : ("Use keys [1] - [" + maxKey + "]");
-			drawBottomHint(g, b, bodyFont, hint);
+			drawBottomHint(g, b, bodyFont, hint, s);
 		}
 	}
 
@@ -243,14 +262,14 @@ class ImmersiveDialogueOverlay extends Overlay
 	 * Draws the lines top-aligned and horizontally centered. Option rows (non-negative subid) get extra
 	 * vertical padding so the numbered choices are comfortably spaced.
 	 */
-	private void drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines)
+	private void drawTextBlock(Graphics2D g, Rectangle b, List<Line> lines, float s)
 	{
 		if (lines.isEmpty())
 		{
 			return;
 		}
 
-		int y = b.y + INSET;
+		int y = b.y + scaled(INSET, s);
 		for (final Line line : lines)
 		{
 			final FontMetrics fm = g.getFontMetrics(line.font);
@@ -259,14 +278,15 @@ class ImmersiveDialogueOverlay extends Overlay
 			if (line.subid >= 0)
 			{
 				// Option row: padded and comfortably spaced.
-				final int rowH = fm.getAscent() + fm.getDescent() + (OPTION_PAD * 2);
-				final int baseline = y + OPTION_PAD + fm.getAscent();
+				final int optPad = scaled(OPTION_PAD, s);
+				final int rowH = fm.getAscent() + fm.getDescent() + (optPad * 2);
+				final int baseline = y + optPad + fm.getAscent();
 				g.setFont(line.font);
 				g.setColor(Color.BLACK);
 				g.drawString(line.text, x + 1, baseline + 1);
 				g.setColor(line.color);
 				g.drawString(line.text, x, baseline);
-				y += rowH + OPTION_GAP;
+				y += rowH + scaled(OPTION_GAP, s);
 			}
 			else
 			{
@@ -278,7 +298,7 @@ class ImmersiveDialogueOverlay extends Overlay
 				g.drawString(line.text, x + 1, y + 1);
 				g.setColor(line.color);
 				g.drawString(line.text, x, y);
-				y += fm.getDescent() + LINE_GAP;
+				y += fm.getDescent() + scaled(LINE_GAP, s);
 			}
 		}
 	}
