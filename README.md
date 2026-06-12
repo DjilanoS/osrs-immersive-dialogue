@@ -28,6 +28,8 @@ Every kind of chatbox dialogue is moved to the centered panel:
   shown with no head.
 - **Item "show" messages** — e.g. *You show the cup to Junior Jim.*, with the item's
   picture kept beside the text.
+- **Level-up messages** — e.g. *Congratulations, you just advanced an Attack level.*,
+  with the skill's celebratory model kept beside the text.
 
 ## The difference: a chat-head that isn't cut off
 

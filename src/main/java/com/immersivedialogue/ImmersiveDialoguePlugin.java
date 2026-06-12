@@ -72,7 +72,8 @@ public class ImmersiveDialoguePlugin extends Plugin
 		// relocated box does not flash for one frame before the next BeforeRender catches it.
 		final int group = event.getGroupId();
 		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU
-			|| group == InterfaceID.MESSAGEBOX || group == InterfaceID.OBJECTBOX)
+			|| group == InterfaceID.MESSAGEBOX || group == InterfaceID.OBJECTBOX
+			|| group == InterfaceID.LEVELUP_DISPLAY)
 		{
 			controller.reassertNativeVisibility();
 		}

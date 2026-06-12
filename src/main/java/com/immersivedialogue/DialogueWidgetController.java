@@ -44,7 +44,7 @@ class DialogueWidgetController
 {
 	enum Kind
 	{
-		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT
+		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT, LEVELUP
 	}
 
 	/**
@@ -86,6 +86,40 @@ class DialogueWidgetController
 	// overlay draws.
 	private static final int OPTION_TEXT_BUFFER = 4;
 	private static final int OPTIONS_MAX_H = 300;
+
+	/**
+	 * The level-up interface ({@link InterfaceID.LevelupDisplay}) holds one container per skill, each wrapping a
+	 * celebratory 3D model; the client shows only the skill that just levelled and hides the rest. Each entry is
+	 * {@code {container, model}}: the container's visibility identifies the levelled skill (parent-aware
+	 * {@code isHidden}), and its model is relocated beside our box like a chat-head.
+	 */
+	private static final int[][] LEVELUP_SKILLS = {
+		{InterfaceID.LevelupDisplay.ATTACK, InterfaceID.LevelupDisplay.ATTACK_MODEL0},
+		{InterfaceID.LevelupDisplay.STRENGTH, InterfaceID.LevelupDisplay.STRENGTH_MODEL0},
+		{InterfaceID.LevelupDisplay.DEFENCE, InterfaceID.LevelupDisplay.DEFENCE_MODEL0},
+		{InterfaceID.LevelupDisplay.RANGED, InterfaceID.LevelupDisplay.RANGED_MODEL0},
+		{InterfaceID.LevelupDisplay.PRAYER, InterfaceID.LevelupDisplay.PRAYER_MODEL0},
+		{InterfaceID.LevelupDisplay.MAGIC, InterfaceID.LevelupDisplay.MAGIC_MODEL0},
+		{InterfaceID.LevelupDisplay.HITPOINTS, InterfaceID.LevelupDisplay.HITPOINTS_MODEL0},
+		{InterfaceID.LevelupDisplay.AGILITY, InterfaceID.LevelupDisplay.AGILITY_MODEL0},
+		{InterfaceID.LevelupDisplay.HERBLORE, InterfaceID.LevelupDisplay.HERBLORE_MODEL0},
+		{InterfaceID.LevelupDisplay.THIEVING, InterfaceID.LevelupDisplay.THIEVING_MODEL0},
+		{InterfaceID.LevelupDisplay.CRAFTING, InterfaceID.LevelupDisplay.CRAFTING_MODEL0},
+		{InterfaceID.LevelupDisplay.FLETCHING, InterfaceID.LevelupDisplay.FLETCHING_MODEL0},
+		{InterfaceID.LevelupDisplay.SLAYER, InterfaceID.LevelupDisplay.SLAYER_MODEL0},
+		{InterfaceID.LevelupDisplay.HUNTER, InterfaceID.LevelupDisplay.HUNTER_MODEL0},
+		{InterfaceID.LevelupDisplay.MINING, InterfaceID.LevelupDisplay.MINING_MODEL0},
+		{InterfaceID.LevelupDisplay.SMITHING, InterfaceID.LevelupDisplay.SMITHING_MODEL0},
+		{InterfaceID.LevelupDisplay.FISHING, InterfaceID.LevelupDisplay.FISHING_MODEL0},
+		{InterfaceID.LevelupDisplay.COOKING, InterfaceID.LevelupDisplay.COOKING_MODEL0},
+		{InterfaceID.LevelupDisplay.FIREMAKING, InterfaceID.LevelupDisplay.FIREMAKING_MODEL0},
+		{InterfaceID.LevelupDisplay.WOODCUTTING, InterfaceID.LevelupDisplay.WOODCUTTING_MODEL0},
+		{InterfaceID.LevelupDisplay.FARMING, InterfaceID.LevelupDisplay.FARMING_MODEL0},
+		{InterfaceID.LevelupDisplay.RUNECRAFT, InterfaceID.LevelupDisplay.RUNECRAFT_MODEL0},
+		{InterfaceID.LevelupDisplay.CONSTRUCTION, InterfaceID.LevelupDisplay.CONSTRUCTION_MODEL0},
+		{InterfaceID.LevelupDisplay.COMBAT, InterfaceID.LevelupDisplay.COMBAT_MODEL0},
+		{InterfaceID.LevelupDisplay.SAILING, InterfaceID.LevelupDisplay.SAILING_MODEL0},
+	};
 
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
@@ -183,6 +217,11 @@ class DialogueWidgetController
 			// Item message box ("You show the X to Y."): an item model + text, no speaker.
 			detected = Kind.OBJECT;
 		}
+		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
+		{
+			// Skill level-up interface ("Congratulations, you just advanced..."): two text lines + a skill model.
+			detected = Kind.LEVELUP;
+		}
 		final boolean open = detected != Kind.NONE;
 
 		updateAlpha(open, dt);
@@ -234,6 +273,11 @@ class DialogueWidgetController
 				// widget bakes in the "Click here to continue" line, so strip that before redrawing.
 				headSource = client.getWidget(InterfaceID.Objectbox.ITEM);
 				bodyText = stripContinuePrompt(text(InterfaceID.Objectbox.TEXT));
+				break;
+			case LEVELUP:
+				// Level-up: combine the two message lines and relocate the levelled skill's model like a head.
+				bodyText = joinLines(text(InterfaceID.LevelupDisplay.TEXT1), text(InterfaceID.LevelupDisplay.TEXT2));
+				headSource = levelupModel();
 				break;
 			default:
 				break;
@@ -567,6 +611,52 @@ class DialogueWidgetController
 		return text.replaceFirst("(?is)\\s*click here to continue\\.?\\s*$", "").trim();
 	}
 
+	/** Join two message lines with a newline, tolerating either being null/empty (returns the other). */
+	private static String joinLines(String a, String b)
+	{
+		final boolean ea = a == null || a.isEmpty();
+		final boolean eb = b == null || b.isEmpty();
+		if (ea)
+		{
+			return eb ? null : b;
+		}
+		return eb ? a : (a + "\n" + b);
+	}
+
+	/**
+	 * The {@code {container, model}} entry of the skill currently shown on the level-up interface, or
+	 * {@code null} when none is visible. The client hides every skill container except the one that just
+	 * levelled, and {@link Widget#isHidden()} is parent-aware, so the single visible container identifies it.
+	 */
+	private int[] levelupSkill()
+	{
+		for (final int[] skill : LEVELUP_SKILLS)
+		{
+			if (visible(client.getWidget(skill[0])))
+			{
+				return skill;
+			}
+		}
+		return null;
+	}
+
+	/** The levelled skill's celebratory MODEL widget (relocated like a chat-head), or {@code null}. */
+	private Widget levelupModel()
+	{
+		final int[] skill = levelupSkill();
+		return skill == null ? null : client.getWidget(skill[1]);
+	}
+
+	/** Hide the levelled skill's container so the native (clipped) model isn't drawn alongside our relocated copy. */
+	private void hideLevelupModel()
+	{
+		final int[] skill = levelupSkill();
+		if (skill != null)
+		{
+			hide(skill[0]);
+		}
+	}
+
 	/** Strip OSRS markup; convert {@code <br>} to newlines. */
 	static String clean(String raw)
 	{
@@ -625,6 +715,14 @@ class DialogueWidgetController
 				// the continue target, so it must stay interactive for native spacebar / click to advance.
 				hide(InterfaceID.Objectbox.ITEM);
 				dim(InterfaceID.Objectbox.TEXT);
+				break;
+			case LEVELUP:
+				// Hide the two message lines and the native (clipped) skill model we redraw; dim (not hide)
+				// CONTINUE so the native spacebar / click still advances the level-up.
+				hide(InterfaceID.LevelupDisplay.TEXT1);
+				hide(InterfaceID.LevelupDisplay.TEXT2);
+				hideLevelupModel();
+				dim(InterfaceID.LevelupDisplay.CONTINUE);
 				break;
 			default:
 				break;
@@ -745,6 +843,10 @@ class DialogueWidgetController
 		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
 		{
 			detected = Kind.OBJECT;
+		}
+		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
+		{
+			detected = Kind.LEVELUP;
 		}
 		if (detected != Kind.NONE)
 		{

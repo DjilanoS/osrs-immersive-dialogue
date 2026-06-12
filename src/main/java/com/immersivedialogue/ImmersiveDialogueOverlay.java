@@ -113,8 +113,10 @@ class ImmersiveDialogueOverlay extends Overlay
 				case PLAYER:
 				case MESSAGE:
 				case OBJECT:
-					// MESSAGE/OBJECT have no speaker name (null); they draw as body text + the continue hint.
-					// OBJECT additionally shows its item model beside the box (rendered through the head pipeline).
+				case LEVELUP:
+					// MESSAGE/OBJECT/LEVELUP have no speaker name (null); they draw as body text + the continue
+					// hint. OBJECT shows its item model beside the box and LEVELUP the levelled skill's model,
+					// both rendered through the head pipeline.
 					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor, s);
 					break;
 				case OPTIONS:
