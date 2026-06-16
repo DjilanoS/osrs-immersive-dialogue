@@ -35,6 +35,7 @@ class ImmersiveDialogueOverlay extends Overlay
 	/** Lower bound for scaled font sizes so text stays legible at small scales (shared with optionsBoxHeight). */
 	static final int MIN_FONT_PX = 8;
 	private static final String CONTINUE_TEXT = "Press Space to continue";
+	private static final String SKIP_TEXT = "Press Space to skip";
 	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
 	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
@@ -113,8 +114,10 @@ class ImmersiveDialogueOverlay extends Overlay
 				case PLAYER:
 				case MESSAGE:
 				case OBJECT:
-					// MESSAGE/OBJECT have no speaker name (null); they draw as body text + the continue hint.
-					// OBJECT additionally shows its item model beside the box (rendered through the head pipeline).
+				case LEVELUP:
+					// MESSAGE/OBJECT/LEVELUP have no speaker name (null); they draw as body text + the continue
+					// hint. OBJECT shows its item model beside the box and LEVELUP the levelled skill's model,
+					// both rendered through the head pipeline.
 					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor, s);
 					break;
 				case OPTIONS:
@@ -198,14 +201,24 @@ class ImmersiveDialogueOverlay extends Overlay
 		if (body != null && !body.isEmpty())
 		{
 			final FontMetrics bfm = g.getFontMetrics(bodyFont);
+			// Typewriter: wrap the FULL body (stable line breaks that never reflow as characters appear), then
+			// clip the drawn glyphs to the revealed character budget. getRevealedChars() is MAX_VALUE when not
+			// revealing, so the whole body draws exactly as before.
+			int remaining = controller.getRevealedChars();
 			for (final String wrapped : wrap(body, bfm, maxWidth))
 			{
-				lines.add(new Line(wrapped, bodyFont, textColor, -1));
+				if (remaining <= 0)
+				{
+					break;
+				}
+				final String shown = wrapped.length() <= remaining ? wrapped : wrapped.substring(0, remaining);
+				remaining -= shown.length();
+				lines.add(new Line(shown, bodyFont, textColor, -1));
 			}
 		}
 
 		drawTextBlock(g, b, lines, s);
-		drawBottomHint(g, b, bodyFont, CONTINUE_TEXT, s);
+		drawBottomHint(g, b, bodyFont, controller.isRevealing() ? SKIP_TEXT : CONTINUE_TEXT, s);
 	}
 
 	/**

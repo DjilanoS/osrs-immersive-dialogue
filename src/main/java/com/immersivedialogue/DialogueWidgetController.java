@@ -44,7 +44,7 @@ class DialogueWidgetController
 {
 	enum Kind
 	{
-		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT
+		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT, LEVELUP
 	}
 
 	/**
@@ -80,6 +80,8 @@ class DialogueWidgetController
 	private static final float ALPHA_EPSILON = 0.01f;
 	/** Animation id meaning "no animation" — a static head. */
 	private static final int NO_ANIM = -1;
+	/** Visible (non-whitespace) characters between voice blips while a line types out. */
+	private static final int CHARS_PER_BLIP = 3;
 
 	// Adaptive OPTIONS box sizing. The per-row text-height allowance is the configured text size plus this
 	// buffer, over-estimating the runescape body line height so the box always covers the option rows the
@@ -87,9 +89,44 @@ class DialogueWidgetController
 	private static final int OPTION_TEXT_BUFFER = 4;
 	private static final int OPTIONS_MAX_H = 300;
 
+	/**
+	 * The level-up interface ({@link InterfaceID.LevelupDisplay}) holds one container per skill, each wrapping a
+	 * celebratory 3D model; the client shows only the skill that just levelled and hides the rest. Each entry is
+	 * {@code {container, model}}: the container's visibility identifies the levelled skill (parent-aware
+	 * {@code isHidden}), and its model is relocated beside our box like a chat-head.
+	 */
+	private static final int[][] LEVELUP_SKILLS = {
+		{InterfaceID.LevelupDisplay.ATTACK, InterfaceID.LevelupDisplay.ATTACK_MODEL0},
+		{InterfaceID.LevelupDisplay.STRENGTH, InterfaceID.LevelupDisplay.STRENGTH_MODEL0},
+		{InterfaceID.LevelupDisplay.DEFENCE, InterfaceID.LevelupDisplay.DEFENCE_MODEL0},
+		{InterfaceID.LevelupDisplay.RANGED, InterfaceID.LevelupDisplay.RANGED_MODEL0},
+		{InterfaceID.LevelupDisplay.PRAYER, InterfaceID.LevelupDisplay.PRAYER_MODEL0},
+		{InterfaceID.LevelupDisplay.MAGIC, InterfaceID.LevelupDisplay.MAGIC_MODEL0},
+		{InterfaceID.LevelupDisplay.HITPOINTS, InterfaceID.LevelupDisplay.HITPOINTS_MODEL0},
+		{InterfaceID.LevelupDisplay.AGILITY, InterfaceID.LevelupDisplay.AGILITY_MODEL0},
+		{InterfaceID.LevelupDisplay.HERBLORE, InterfaceID.LevelupDisplay.HERBLORE_MODEL0},
+		{InterfaceID.LevelupDisplay.THIEVING, InterfaceID.LevelupDisplay.THIEVING_MODEL0},
+		{InterfaceID.LevelupDisplay.CRAFTING, InterfaceID.LevelupDisplay.CRAFTING_MODEL0},
+		{InterfaceID.LevelupDisplay.FLETCHING, InterfaceID.LevelupDisplay.FLETCHING_MODEL0},
+		{InterfaceID.LevelupDisplay.SLAYER, InterfaceID.LevelupDisplay.SLAYER_MODEL0},
+		{InterfaceID.LevelupDisplay.HUNTER, InterfaceID.LevelupDisplay.HUNTER_MODEL0},
+		{InterfaceID.LevelupDisplay.MINING, InterfaceID.LevelupDisplay.MINING_MODEL0},
+		{InterfaceID.LevelupDisplay.SMITHING, InterfaceID.LevelupDisplay.SMITHING_MODEL0},
+		{InterfaceID.LevelupDisplay.FISHING, InterfaceID.LevelupDisplay.FISHING_MODEL0},
+		{InterfaceID.LevelupDisplay.COOKING, InterfaceID.LevelupDisplay.COOKING_MODEL0},
+		{InterfaceID.LevelupDisplay.FIREMAKING, InterfaceID.LevelupDisplay.FIREMAKING_MODEL0},
+		{InterfaceID.LevelupDisplay.WOODCUTTING, InterfaceID.LevelupDisplay.WOODCUTTING_MODEL0},
+		{InterfaceID.LevelupDisplay.FARMING, InterfaceID.LevelupDisplay.FARMING_MODEL0},
+		{InterfaceID.LevelupDisplay.RUNECRAFT, InterfaceID.LevelupDisplay.RUNECRAFT_MODEL0},
+		{InterfaceID.LevelupDisplay.CONSTRUCTION, InterfaceID.LevelupDisplay.CONSTRUCTION_MODEL0},
+		{InterfaceID.LevelupDisplay.COMBAT, InterfaceID.LevelupDisplay.COMBAT_MODEL0},
+		{InterfaceID.LevelupDisplay.SAILING, InterfaceID.LevelupDisplay.SAILING_MODEL0},
+	};
+
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
 	private final ConfigManager configManager;
+	private final VoiceBlipPlayer voicePlayer;
 
 	/** Canvas bounds of the bottom-center box this frame, or {@code null} when no dialogue is open. */
 	@Getter
@@ -136,12 +173,34 @@ class DialogueWidgetController
 	private volatile int dragDx;
 	private volatile int dragDy;
 
+	// --- Voice-blip typewriter reveal -----------------------------------------
+	/** True while a line is still typing out. Read on the AWT thread by the key / mouse listeners. */
+	private volatile boolean revealing;
+	/** Set on the AWT thread (Space / left-click) to finish the current line; consumed on the client thread. */
+	private volatile boolean skipRequested;
+	/** Characters of {@link #bodyText} revealed so far (client thread only). */
+	private int revealedChars;
+	/** Fractional carry so the reveal advances smoothly at the configured chars/second (client thread only). */
+	private float revealAccumulator;
+	/** The body text whose reveal is in progress, used to detect when a new line appears (client thread only). */
+	private String lastRevealBody;
+	/** The voice chosen for the speaker of the current line (client thread only). */
+	private VoiceType voiceType = VoiceType.HUMAN;
+	/** Round-robin index into {@link VoiceType#resources} (client thread only). */
+	private int voiceCursor;
+	/** Non-whitespace characters revealed since the last blip (client thread only). */
+	private int charsSinceBlip;
+	/** Set once the line is fully revealed or skipped, suppressing any further blips for it (client thread only). */
+	private boolean blipsDoneForLine;
+
 	@Inject
-	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager)
+	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager,
+		VoiceBlipPlayer voicePlayer)
 	{
 		this.client = client;
 		this.config = config;
 		this.configManager = configManager;
+		this.voicePlayer = voicePlayer;
 	}
 
 	/** Re-applied every frame from {@code BeforeRender}. */
@@ -183,12 +242,22 @@ class DialogueWidgetController
 			// Item message box ("You show the X to Y."): an item model + text, no speaker.
 			detected = Kind.OBJECT;
 		}
+		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
+		{
+			// Skill level-up interface ("Congratulations, you just advanced..."): two text lines + a skill model.
+			detected = Kind.LEVELUP;
+		}
 		final boolean open = detected != Kind.NONE;
 
 		updateAlpha(open, dt);
 
 		if (!open)
 		{
+			// A closing dialogue has nothing left to type out: stop revealing so the fade-out shows the full
+			// last line, the skip keys disengage, and the next open is treated as a fresh line.
+			revealing = false;
+			skipRequested = false;
+			lastRevealBody = null;
 			// Still fading out: retain last frame's content + head (only nudge the head's opacity).
 			if (fadeActive() && displayAlpha > ALPHA_EPSILON)
 			{
@@ -235,8 +304,25 @@ class DialogueWidgetController
 				headSource = client.getWidget(InterfaceID.Objectbox.ITEM);
 				bodyText = stripContinuePrompt(text(InterfaceID.Objectbox.TEXT));
 				break;
+			case LEVELUP:
+				// Level-up: combine the two message lines and relocate the levelled skill's model like a head.
+				bodyText = joinLines(text(InterfaceID.LevelupDisplay.TEXT1), text(InterfaceID.LevelupDisplay.TEXT2));
+				headSource = levelupModel();
+				break;
 			default:
 				break;
+		}
+
+		// Voice-blip typewriter: only NPC / player conversation lines reveal + blip, and only when enabled.
+		// Everything else (and the feature being off) shows the full text instantly — see getRevealedChars().
+		if (config.voiceBlips() && (kind == Kind.NPC || kind == Kind.PLAYER) && bodyText != null)
+		{
+			advanceReveal(dt);
+		}
+		else
+		{
+			revealing = false;
+			lastRevealBody = null;
 		}
 
 		final int cw = client.getCanvasWidth();
@@ -296,6 +382,112 @@ class DialogueWidgetController
 		{
 			displayAlpha = Math.max(target, displayAlpha - step);
 		}
+	}
+
+	/**
+	 * Advances the typewriter reveal for the current NPC / player line by the elapsed time, firing voice blips as
+	 * new characters appear. A new line is detected by comparing against {@link #lastRevealBody}; a pending
+	 * {@link #requestSkip()} jumps to the end and silences the rest of the line. Client thread only.
+	 */
+	private void advanceReveal(float dt)
+	{
+		final String body = bodyText;
+		if (!body.equals(lastRevealBody))
+		{
+			// New line: reset progress and pick the speaker's voice (player is always the human set).
+			lastRevealBody = body;
+			revealedChars = 0;
+			revealAccumulator = 0f;
+			charsSinceBlip = 0;
+			voiceCursor = 0;
+			blipsDoneForLine = false;
+			voiceType = (kind == Kind.PLAYER) ? VoiceType.HUMAN : VoiceClassifier.classify(speakerName);
+			revealing = true;
+		}
+
+		if (skipRequested)
+		{
+			skipRequested = false;
+			revealedChars = body.length();
+			blipsDoneForLine = true;
+			revealing = false;
+			return;
+		}
+
+		if (revealedChars >= body.length())
+		{
+			revealing = false;
+			return;
+		}
+
+		revealing = true;
+		revealAccumulator += config.textSpeed() * dt;
+		final int step = (int) revealAccumulator;
+		if (step <= 0)
+		{
+			return;
+		}
+		revealAccumulator -= step;
+		final int target = Math.min(body.length(), revealedChars + step);
+		for (int i = revealedChars; i < target; i++)
+		{
+			if (!Character.isWhitespace(body.charAt(i)) && ++charsSinceBlip >= CHARS_PER_BLIP)
+			{
+				charsSinceBlip = 0;
+				playBlip();
+			}
+		}
+		revealedChars = target;
+		if (revealedChars >= body.length())
+		{
+			revealing = false;
+		}
+	}
+
+	/** Plays the next blip in the current voice set, unless the line is done or the volume is zero. Client thread. */
+	private void playBlip()
+	{
+		if (blipsDoneForLine)
+		{
+			return;
+		}
+		final int volume = config.voiceVolume();
+		if (volume <= 0)
+		{
+			return;
+		}
+		final String[] set = voiceType.resources;
+		voicePlayer.play(set[voiceCursor % set.length], volume);
+		voiceCursor++;
+	}
+
+	/**
+	 * Number of body characters to draw this frame: the revealed count while typing, or {@link Integer#MAX_VALUE}
+	 * when not revealing (feature off, non-conversation dialogue, or line complete) so the overlay draws it all.
+	 */
+	int getRevealedChars()
+	{
+		return revealing ? revealedChars : Integer.MAX_VALUE;
+	}
+
+	/** True while a line is still typing out (used by the key / mouse listeners to decide whether to skip). */
+	boolean isRevealing()
+	{
+		return revealing;
+	}
+
+	/** Request that the current line finish revealing immediately (Space / left-click). AWT thread. */
+	void requestSkip()
+	{
+		skipRequested = true;
+	}
+
+	/** Snap the reveal off so the full line shows at once (used when the feature is toggled off mid-conversation). */
+	void endReveal()
+	{
+		revealing = false;
+		skipRequested = false;
+		lastRevealBody = null;
 	}
 
 	/**
@@ -567,6 +759,52 @@ class DialogueWidgetController
 		return text.replaceFirst("(?is)\\s*click here to continue\\.?\\s*$", "").trim();
 	}
 
+	/** Join two message lines with a newline, tolerating either being null/empty (returns the other). */
+	private static String joinLines(String a, String b)
+	{
+		final boolean ea = a == null || a.isEmpty();
+		final boolean eb = b == null || b.isEmpty();
+		if (ea)
+		{
+			return eb ? null : b;
+		}
+		return eb ? a : (a + "\n" + b);
+	}
+
+	/**
+	 * The {@code {container, model}} entry of the skill currently shown on the level-up interface, or
+	 * {@code null} when none is visible. The client hides every skill container except the one that just
+	 * levelled, and {@link Widget#isHidden()} is parent-aware, so the single visible container identifies it.
+	 */
+	private int[] levelupSkill()
+	{
+		for (final int[] skill : LEVELUP_SKILLS)
+		{
+			if (visible(client.getWidget(skill[0])))
+			{
+				return skill;
+			}
+		}
+		return null;
+	}
+
+	/** The levelled skill's celebratory MODEL widget (relocated like a chat-head), or {@code null}. */
+	private Widget levelupModel()
+	{
+		final int[] skill = levelupSkill();
+		return skill == null ? null : client.getWidget(skill[1]);
+	}
+
+	/** Hide the levelled skill's container so the native (clipped) model isn't drawn alongside our relocated copy. */
+	private void hideLevelupModel()
+	{
+		final int[] skill = levelupSkill();
+		if (skill != null)
+		{
+			hide(skill[0]);
+		}
+	}
+
 	/** Strip OSRS markup; convert {@code <br>} to newlines. */
 	static String clean(String raw)
 	{
@@ -625,6 +863,14 @@ class DialogueWidgetController
 				// the continue target, so it must stay interactive for native spacebar / click to advance.
 				hide(InterfaceID.Objectbox.ITEM);
 				dim(InterfaceID.Objectbox.TEXT);
+				break;
+			case LEVELUP:
+				// Hide the two message lines and the native (clipped) skill model we redraw; dim (not hide)
+				// CONTINUE so the native spacebar / click still advances the level-up.
+				hide(InterfaceID.LevelupDisplay.TEXT1);
+				hide(InterfaceID.LevelupDisplay.TEXT2);
+				hideLevelupModel();
+				dim(InterfaceID.LevelupDisplay.CONTINUE);
 				break;
 			default:
 				break;
@@ -745,6 +991,10 @@ class DialogueWidgetController
 		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
 		{
 			detected = Kind.OBJECT;
+		}
+		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
+		{
+			detected = Kind.LEVELUP;
 		}
 		if (detected != Kind.NONE)
 		{
@@ -967,5 +1217,10 @@ class DialogueWidgetController
 		resetHead();
 		displayAlpha = 0f;
 		lastFrameMs = 0L;
+		revealing = false;
+		skipRequested = false;
+		revealedChars = 0;
+		lastRevealBody = null;
+		blipsDoneForLine = false;
 	}
 }
