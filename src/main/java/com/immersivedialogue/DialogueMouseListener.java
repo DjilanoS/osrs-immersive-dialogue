@@ -111,6 +111,12 @@ class DialogueMouseListener extends MouseAdapter
 		{
 			return event;
 		}
+		// While the dialogue is still typing out, a left-click on the box finishes the reveal. The click is
+		// consumed below (never sent to the game); this mirrors the Space-to-skip key handling.
+		if (SwingUtilities.isLeftMouseButton(event) && controller.isRevealing())
+		{
+			controller.requestSkip();
+		}
 		// Block the world click underneath the box (and suppress its right-click menu).
 		event.consume();
 		return event;

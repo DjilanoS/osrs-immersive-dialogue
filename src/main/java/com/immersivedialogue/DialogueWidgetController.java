@@ -80,6 +80,8 @@ class DialogueWidgetController
 	private static final float ALPHA_EPSILON = 0.01f;
 	/** Animation id meaning "no animation" — a static head. */
 	private static final int NO_ANIM = -1;
+	/** Visible (non-whitespace) characters between voice blips while a line types out. */
+	private static final int CHARS_PER_BLIP = 3;
 
 	// Adaptive OPTIONS box sizing. The per-row text-height allowance is the configured text size plus this
 	// buffer, over-estimating the runescape body line height so the box always covers the option rows the
@@ -124,6 +126,7 @@ class DialogueWidgetController
 	private final Client client;
 	private final ImmersiveDialogueConfig config;
 	private final ConfigManager configManager;
+	private final VoiceBlipPlayer voicePlayer;
 
 	/** Canvas bounds of the bottom-center box this frame, or {@code null} when no dialogue is open. */
 	@Getter
@@ -170,12 +173,34 @@ class DialogueWidgetController
 	private volatile int dragDx;
 	private volatile int dragDy;
 
+	// --- Voice-blip typewriter reveal -----------------------------------------
+	/** True while a line is still typing out. Read on the AWT thread by the key / mouse listeners. */
+	private volatile boolean revealing;
+	/** Set on the AWT thread (Space / left-click) to finish the current line; consumed on the client thread. */
+	private volatile boolean skipRequested;
+	/** Characters of {@link #bodyText} revealed so far (client thread only). */
+	private int revealedChars;
+	/** Fractional carry so the reveal advances smoothly at the configured chars/second (client thread only). */
+	private float revealAccumulator;
+	/** The body text whose reveal is in progress, used to detect when a new line appears (client thread only). */
+	private String lastRevealBody;
+	/** The voice chosen for the speaker of the current line (client thread only). */
+	private VoiceType voiceType = VoiceType.HUMAN;
+	/** Round-robin index into {@link VoiceType#resources} (client thread only). */
+	private int voiceCursor;
+	/** Non-whitespace characters revealed since the last blip (client thread only). */
+	private int charsSinceBlip;
+	/** Set once the line is fully revealed or skipped, suppressing any further blips for it (client thread only). */
+	private boolean blipsDoneForLine;
+
 	@Inject
-	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager)
+	DialogueWidgetController(Client client, ImmersiveDialogueConfig config, ConfigManager configManager,
+		VoiceBlipPlayer voicePlayer)
 	{
 		this.client = client;
 		this.config = config;
 		this.configManager = configManager;
+		this.voicePlayer = voicePlayer;
 	}
 
 	/** Re-applied every frame from {@code BeforeRender}. */
@@ -228,6 +253,11 @@ class DialogueWidgetController
 
 		if (!open)
 		{
+			// A closing dialogue has nothing left to type out: stop revealing so the fade-out shows the full
+			// last line, the skip keys disengage, and the next open is treated as a fresh line.
+			revealing = false;
+			skipRequested = false;
+			lastRevealBody = null;
 			// Still fading out: retain last frame's content + head (only nudge the head's opacity).
 			if (fadeActive() && displayAlpha > ALPHA_EPSILON)
 			{
@@ -281,6 +311,18 @@ class DialogueWidgetController
 				break;
 			default:
 				break;
+		}
+
+		// Voice-blip typewriter: only NPC / player conversation lines reveal + blip, and only when enabled.
+		// Everything else (and the feature being off) shows the full text instantly — see getRevealedChars().
+		if (config.voiceBlips() && (kind == Kind.NPC || kind == Kind.PLAYER) && bodyText != null)
+		{
+			advanceReveal(dt);
+		}
+		else
+		{
+			revealing = false;
+			lastRevealBody = null;
 		}
 
 		final int cw = client.getCanvasWidth();
@@ -340,6 +382,112 @@ class DialogueWidgetController
 		{
 			displayAlpha = Math.max(target, displayAlpha - step);
 		}
+	}
+
+	/**
+	 * Advances the typewriter reveal for the current NPC / player line by the elapsed time, firing voice blips as
+	 * new characters appear. A new line is detected by comparing against {@link #lastRevealBody}; a pending
+	 * {@link #requestSkip()} jumps to the end and silences the rest of the line. Client thread only.
+	 */
+	private void advanceReveal(float dt)
+	{
+		final String body = bodyText;
+		if (!body.equals(lastRevealBody))
+		{
+			// New line: reset progress and pick the speaker's voice (player is always the human set).
+			lastRevealBody = body;
+			revealedChars = 0;
+			revealAccumulator = 0f;
+			charsSinceBlip = 0;
+			voiceCursor = 0;
+			blipsDoneForLine = false;
+			voiceType = (kind == Kind.PLAYER) ? VoiceType.HUMAN : VoiceClassifier.classify(speakerName);
+			revealing = true;
+		}
+
+		if (skipRequested)
+		{
+			skipRequested = false;
+			revealedChars = body.length();
+			blipsDoneForLine = true;
+			revealing = false;
+			return;
+		}
+
+		if (revealedChars >= body.length())
+		{
+			revealing = false;
+			return;
+		}
+
+		revealing = true;
+		revealAccumulator += config.textSpeed() * dt;
+		final int step = (int) revealAccumulator;
+		if (step <= 0)
+		{
+			return;
+		}
+		revealAccumulator -= step;
+		final int target = Math.min(body.length(), revealedChars + step);
+		for (int i = revealedChars; i < target; i++)
+		{
+			if (!Character.isWhitespace(body.charAt(i)) && ++charsSinceBlip >= CHARS_PER_BLIP)
+			{
+				charsSinceBlip = 0;
+				playBlip();
+			}
+		}
+		revealedChars = target;
+		if (revealedChars >= body.length())
+		{
+			revealing = false;
+		}
+	}
+
+	/** Plays the next blip in the current voice set, unless the line is done or the volume is zero. Client thread. */
+	private void playBlip()
+	{
+		if (blipsDoneForLine)
+		{
+			return;
+		}
+		final int volume = config.voiceVolume();
+		if (volume <= 0)
+		{
+			return;
+		}
+		final String[] set = voiceType.resources;
+		voicePlayer.play(set[voiceCursor % set.length], volume);
+		voiceCursor++;
+	}
+
+	/**
+	 * Number of body characters to draw this frame: the revealed count while typing, or {@link Integer#MAX_VALUE}
+	 * when not revealing (feature off, non-conversation dialogue, or line complete) so the overlay draws it all.
+	 */
+	int getRevealedChars()
+	{
+		return revealing ? revealedChars : Integer.MAX_VALUE;
+	}
+
+	/** True while a line is still typing out (used by the key / mouse listeners to decide whether to skip). */
+	boolean isRevealing()
+	{
+		return revealing;
+	}
+
+	/** Request that the current line finish revealing immediately (Space / left-click). AWT thread. */
+	void requestSkip()
+	{
+		skipRequested = true;
+	}
+
+	/** Snap the reveal off so the full line shows at once (used when the feature is toggled off mid-conversation). */
+	void endReveal()
+	{
+		revealing = false;
+		skipRequested = false;
+		lastRevealBody = null;
 	}
 
 	/**
@@ -1069,5 +1217,10 @@ class DialogueWidgetController
 		resetHead();
 		displayAlpha = 0f;
 		lastFrameMs = 0L;
+		revealing = false;
+		skipRequested = false;
+		revealedChars = 0;
+		lastRevealBody = null;
+		blipsDoneForLine = false;
 	}
 }

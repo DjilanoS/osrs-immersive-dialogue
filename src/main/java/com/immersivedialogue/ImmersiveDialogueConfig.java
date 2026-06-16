@@ -56,6 +56,13 @@ public interface ImmersiveDialogueConfig extends Config
 	)
 	String animationSection = "animation";
 
+	@ConfigSection(
+		name = "Voice",
+		description = "Typewriter text reveal with voice blips played in sequence as the line types out.",
+		position = 6
+	)
+	String voiceSection = "voice";
+
 	@ConfigItem(
 		keyName = "animateHead",
 		name = "Animate head",
@@ -334,5 +341,46 @@ public interface ImmersiveDialogueConfig extends Config
 	default int fadeDuration()
 	{
 		return 150;
+	}
+
+	// --- Voice -----------------------------------------------------------------
+
+	@ConfigItem(
+		keyName = "voiceBlips",
+		name = "Voice blips",
+		description = "Reveal NPC and player dialogue text letter-by-letter and play short voice blips in sequence as it types. The blip set is chosen automatically from the NPC's type.",
+		section = voiceSection,
+		position = 0
+	)
+	default boolean voiceBlips()
+	{
+		return false;
+	}
+
+	@Range(min = 10, max = 80)
+	@ConfigItem(
+		keyName = "textSpeed",
+		name = "Text speed",
+		description = "How fast the dialogue text types out, in characters per second. Only applies while Voice blips is on.",
+		section = voiceSection,
+		position = 1
+	)
+	default int textSpeed()
+	{
+		return 35;
+	}
+
+	@Range(min = 0, max = 100)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "voiceVolume",
+		name = "Voice volume",
+		description = "Playback volume of the voice blips.",
+		section = voiceSection,
+		position = 2
+	)
+	default int voiceVolume()
+	{
+		return 40;
 	}
 }
