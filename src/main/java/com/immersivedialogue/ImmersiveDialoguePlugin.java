@@ -1,9 +1,6 @@
 package com.immersivedialogue;
 
 import com.google.inject.Provides;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.GameState;
@@ -52,20 +49,12 @@ public class ImmersiveDialoguePlugin extends Plugin
 	@Inject
 	private VoiceBlipPlayer voicePlayer;
 
-	@Inject
-	private ImmersiveDialogueConfig config;
-
 	@Override
 	protected void startUp()
 	{
 		overlayManager.add(overlay);
 		mouseManager.registerMouseListener(mouseListener);
 		keyManager.registerKeyListener(keyListener);
-		// Load the blips off the client thread, and only when the feature is actually enabled.
-		if (config.voiceBlips())
-		{
-			preloadVoices();
-		}
 		log.debug("Immersive Dialogue started");
 	}
 
@@ -78,17 +67,6 @@ public class ImmersiveDialoguePlugin extends Plugin
 		voicePlayer.dispose();
 		controller.cleanup();
 		log.debug("Immersive Dialogue stopped");
-	}
-
-	/** Build the full set of blip resource keys (every voice type) and preload them off the client thread. */
-	private void preloadVoices()
-	{
-		final Set<String> keys = new HashSet<>();
-		for (final VoiceType type : VoiceType.values())
-		{
-			Collections.addAll(keys, type.resources);
-		}
-		voicePlayer.preloadAsync(keys);
 	}
 
 	@Subscribe
@@ -141,17 +119,10 @@ public class ImmersiveDialoguePlugin extends Plugin
 		{
 			controller.resetPosition();
 		}
-		// Voice blips toggled: load the audio the first time it is enabled, else snap the current line to full text.
-		else if ("voiceBlips".equals(event.getKey()))
+		// Voice blips switched off mid-conversation: snap the current line to its full text.
+		else if ("voiceBlips".equals(event.getKey()) && "false".equals(event.getNewValue()))
 		{
-			if ("true".equals(event.getNewValue()))
-			{
-				preloadVoices();
-			}
-			else
-			{
-				controller.endReveal();
-			}
+			controller.endReveal();
 		}
 	}
 
