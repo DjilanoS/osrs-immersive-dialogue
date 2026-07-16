@@ -13,8 +13,6 @@ import java.awt.Stroke;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
-import net.runelite.api.Client;
-import net.runelite.api.Point;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -36,17 +34,13 @@ class ImmersiveDialogueOverlay extends Overlay
 	static final int MIN_FONT_PX = 8;
 	private static final String CONTINUE_TEXT = "Press Space to continue";
 	private static final String SKIP_TEXT = "Press Space to skip";
-	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
-	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
-	private final Client client;
 	private final DialogueWidgetController controller;
 	private final ImmersiveDialogueConfig config;
 
 	@Inject
-	ImmersiveDialogueOverlay(Client client, DialogueWidgetController controller, ImmersiveDialogueConfig config)
+	ImmersiveDialogueOverlay(DialogueWidgetController controller, ImmersiveDialogueConfig config)
 	{
-		this.client = client;
 		this.controller = controller;
 		this.config = config;
 		setPosition(OverlayPosition.DYNAMIC);
@@ -218,13 +212,14 @@ class ImmersiveDialogueOverlay extends Overlay
 		}
 
 		drawTextBlock(g, b, lines, s);
-		drawBottomHint(g, b, bodyFont, controller.isRevealing() ? SKIP_TEXT : CONTINUE_TEXT, s);
+		if (config.showHints())
+		{
+			drawBottomHint(g, b, bodyFont, controller.isRevealing() ? SKIP_TEXT : CONTINUE_TEXT, s);
+		}
 	}
 
 	/**
-	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …"). Muted by default,
-	 * it brightens to full white while the cursor is over the dialogue box, drawing attention to the keys that
-	 * drive it.
+	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …").
 	 */
 	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text, float s)
 	{
@@ -232,13 +227,10 @@ class ImmersiveDialogueOverlay extends Overlay
 		final int x = b.x + ((b.width - fm.stringWidth(text)) / 2);
 		final int y = b.y + b.height - fm.getDescent() - (scaled(INSET, s) / 2);
 
-		final Point mouse = client.getMouseCanvasPosition();
-		final boolean hover = mouse != null && b.contains(mouse.getX(), mouse.getY());
-
 		g.setFont(font);
 		g.setColor(Color.BLACK);
 		g.drawString(text, x + 1, y + 1);
-		g.setColor(hover ? HINT_HOVER_COLOR : HINT_COLOR);
+		g.setColor(config.hintColor());
 		g.drawString(text, x, y);
 	}
 
@@ -263,7 +255,7 @@ class ImmersiveDialogueOverlay extends Overlay
 			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
 		}
 		drawTextBlock(g, b, lines, s);
-		if (maxKey > 0)
+		if (config.showHints() && maxKey > 0)
 		{
 			// Tell the player which number keys drive the options (optionsBoxHeight reserves this line).
 			final String hint = maxKey == 1 ? "Use key [1]" : ("Use keys [1] - [" + maxKey + "]");
