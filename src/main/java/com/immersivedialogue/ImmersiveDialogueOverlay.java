@@ -13,8 +13,6 @@ import java.awt.Stroke;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
-import net.runelite.api.Client;
-import net.runelite.api.Point;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -36,17 +34,13 @@ class ImmersiveDialogueOverlay extends Overlay
 	static final int MIN_FONT_PX = 8;
 	private static final String CONTINUE_TEXT = "Press Space to continue";
 	private static final String SKIP_TEXT = "Press Space to skip";
-	private static final Color HINT_COLOR = new Color(255, 255, 255, 165);
-	private static final Color HINT_HOVER_COLOR = Color.WHITE;
 
-	private final Client client;
 	private final DialogueWidgetController controller;
 	private final ImmersiveDialogueConfig config;
 
 	@Inject
-	ImmersiveDialogueOverlay(Client client, DialogueWidgetController controller, ImmersiveDialogueConfig config)
+	ImmersiveDialogueOverlay(DialogueWidgetController controller, ImmersiveDialogueConfig config)
 	{
-		this.client = client;
 		this.controller = controller;
 		this.config = config;
 		setPosition(OverlayPosition.DYNAMIC);
@@ -218,13 +212,14 @@ class ImmersiveDialogueOverlay extends Overlay
 		}
 
 		drawTextBlock(g, b, lines, s);
-		drawBottomHint(g, b, bodyFont, controller.isRevealing() ? SKIP_TEXT : CONTINUE_TEXT, s);
+		if (config.showHints())
+		{
+			drawBottomHint(g, b, bodyFont, controller.isRevealing() ? SKIP_TEXT : CONTINUE_TEXT, s);
+		}
 	}
 
 	/**
-	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …"). Muted by default,
-	 * it brightens to full white while the cursor is over the dialogue box, drawing attention to the keys that
-	 * drive it.
+	 * A bottom-centered hint line (e.g. "Press Space to continue" / "Use keys [1] - [N] …").
 	 */
 	private void drawBottomHint(Graphics2D g, Rectangle b, Font font, String text, float s)
 	{
@@ -232,13 +227,10 @@ class ImmersiveDialogueOverlay extends Overlay
 		final int x = b.x + ((b.width - fm.stringWidth(text)) / 2);
 		final int y = b.y + b.height - fm.getDescent() - (scaled(INSET, s) / 2);
 
-		final Point mouse = client.getMouseCanvasPosition();
-		final boolean hover = mouse != null && b.contains(mouse.getX(), mouse.getY());
-
 		g.setFont(font);
 		g.setColor(Color.BLACK);
 		g.drawString(text, x + 1, y + 1);
-		g.setColor(hover ? HINT_HOVER_COLOR : HINT_COLOR);
+		g.setColor(config.hintColor());
 		g.drawString(text, x, y);
 	}
 
@@ -254,16 +246,19 @@ class ImmersiveDialogueOverlay extends Overlay
 			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
 			final Color color = option.highlighted ? config.questHelperHighlightColor()
 				: (header ? nameColor : textColor);
-			// Prefix each selectable option with the number key that picks it (native 1-5 handling).
-			final String text = header ? option.text : ("[" + option.subid + "] " + option.text);
-			if (!header)
+			if (header)
 			{
-				maxKey = Math.max(maxKey, option.subid);
+				lines.add(new Line(option.text, nameFont, color, -1));
+				continue;
 			}
-			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
+			maxKey = Math.max(maxKey, option.subid);
+			// Prefix each selectable option with the number key that picks it (native 1-5 handling). The
+			// "[N] " key marker is drawn in the hint color so it reads as a keyboard hint, like the bottom line.
+			final String prefix = "[" + option.subid + "] ";
+			lines.add(new Line(prefix + option.text, bodyFont, color, option.subid, prefix, config.hintColor()));
 		}
 		drawTextBlock(g, b, lines, s);
-		if (maxKey > 0)
+		if (config.showHints() && maxKey > 0)
 		{
 			// Tell the player which number keys drive the options (optionsBoxHeight reserves this line).
 			final String hint = maxKey == 1 ? "Use key [1]" : ("Use keys [1] - [" + maxKey + "]");
@@ -297,8 +292,20 @@ class ImmersiveDialogueOverlay extends Overlay
 				g.setFont(line.font);
 				g.setColor(Color.BLACK);
 				g.drawString(line.text, x + 1, baseline + 1);
-				g.setColor(line.color);
-				g.drawString(line.text, x, baseline);
+				if (line.prefix != null)
+				{
+					// Draw the "[N]" key marker in the hint color, then the option text in its own color.
+					g.setColor(line.prefixColor);
+					g.drawString(line.prefix, x, baseline);
+					g.setColor(line.color);
+					g.drawString(line.text.substring(line.prefix.length()),
+						x + fm.stringWidth(line.prefix), baseline);
+				}
+				else
+				{
+					g.setColor(line.color);
+					g.drawString(line.text, x, baseline);
+				}
 				y += rowH + scaled(OPTION_GAP, s);
 			}
 			else
@@ -353,13 +360,23 @@ class ImmersiveDialogueOverlay extends Overlay
 		private final Color color;
 		/** Native option child index for a clickable option line, or {@code -1} for plain text. */
 		private final int subid;
+		/** Leading "[N] " key marker drawn in {@link #prefixColor}, or {@code null} for none. */
+		private final String prefix;
+		private final Color prefixColor;
 
 		private Line(String text, Font font, Color color, int subid)
+		{
+			this(text, font, color, subid, null, null);
+		}
+
+		private Line(String text, Font font, Color color, int subid, String prefix, Color prefixColor)
 		{
 			this.text = text;
 			this.font = font;
 			this.color = color;
 			this.subid = subid;
+			this.prefix = prefix;
+			this.prefixColor = prefixColor;
 		}
 	}
 }

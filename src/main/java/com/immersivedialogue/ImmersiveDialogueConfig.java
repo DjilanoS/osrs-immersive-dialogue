@@ -168,6 +168,18 @@ public interface ImmersiveDialogueConfig extends Config
 		return 4;
 	}
 
+	@ConfigItem(
+		keyName = "showHints",
+		name = "Show dialogue hints",
+		description = "Show keyboard hints such as Press Space to continue and Use keys [1] - [N].",
+		section = appearanceSection,
+		position = 2
+	)
+	default boolean showHints()
+	{
+		return true;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "textColor",
@@ -179,6 +191,19 @@ public interface ImmersiveDialogueConfig extends Config
 	default Color textColor()
 	{
 		return Color.WHITE;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "hintColor",
+		name = "Hint color",
+		description = "Color applied to keyboard hints shown below the dialogue.",
+		section = appearanceSection,
+		position = 12
+	)
+	default Color hintColor()
+	{
+		return new Color(255, 255, 255, 165);
 	}
 
 	@Range(min = 12, max = 28)

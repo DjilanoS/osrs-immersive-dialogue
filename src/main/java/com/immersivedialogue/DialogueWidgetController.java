@@ -560,8 +560,11 @@ class DialogueWidgetController
 				h += (bodyPx + textBuf) + (optPad * 2) + optGap;
 			}
 		}
-		// Reserve a line at the bottom for the "Use keys [1] - [N]" hint (drawn in the body font).
-		h += bodyPx + textBuf + lineGap;
+		// Reserve a line at the bottom only when the overlay will draw the options hint.
+		if (config.showHints())
+		{
+			h += bodyPx + textBuf + lineGap;
+		}
 		return Math.min(h, scaled(OPTIONS_MAX_H, s));
 	}
 

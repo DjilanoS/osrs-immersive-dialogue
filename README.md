@@ -94,6 +94,7 @@ grouped into five sections.
 | --- | --- | --- |
 | **Backdrop color** | Color and opacity of the translucent panel. | dark brown, translucent |
 | **Backdrop padding** | Padding around the text inside the panel (0–64 px). | 4 |
+| **Show dialogue hints** | Show keyboard hints such as “Press Space to continue” and “Use keys [1] - [N]”. | on |
 | **Text color** | Body text and option color. | white |
 | **Text size** | Body / option font size (12–28 px). | 16 |
 | **Name color** | Speaker name color. | gold |
@@ -103,6 +104,7 @@ grouped into five sections.
 | **Border width** | Border thickness (1–8 px). | 2 |
 | **Corner radius** | Corner rounding; 0 = square corners (0–40 px). | 16 |
 | **Quest Helper highlight color** | Color used to highlight the option Quest Helper marks correct. | light blue |
+| **Hint color** | Color and opacity of the keyboard hints. | muted white |
 
 ### Avatar appearance
 | Setting | What it does | Default |
