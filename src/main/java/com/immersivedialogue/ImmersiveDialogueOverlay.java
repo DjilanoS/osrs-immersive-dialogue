@@ -246,13 +246,16 @@ class ImmersiveDialogueOverlay extends Overlay
 			// Mirror Quest Helper's highlight in our own legible color (detection used QH's real color).
 			final Color color = option.highlighted ? config.questHelperHighlightColor()
 				: (header ? nameColor : textColor);
-			// Prefix each selectable option with the number key that picks it (native 1-5 handling).
-			final String text = header ? option.text : ("[" + option.subid + "] " + option.text);
-			if (!header)
+			if (header)
 			{
-				maxKey = Math.max(maxKey, option.subid);
+				lines.add(new Line(option.text, nameFont, color, -1));
+				continue;
 			}
-			lines.add(new Line(text, header ? nameFont : bodyFont, color, header ? -1 : option.subid));
+			maxKey = Math.max(maxKey, option.subid);
+			// Prefix each selectable option with the number key that picks it (native 1-5 handling). The
+			// "[N] " key marker is drawn in the hint color so it reads as a keyboard hint, like the bottom line.
+			final String prefix = "[" + option.subid + "] ";
+			lines.add(new Line(prefix + option.text, bodyFont, color, option.subid, prefix, config.hintColor()));
 		}
 		drawTextBlock(g, b, lines, s);
 		if (config.showHints() && maxKey > 0)
@@ -289,8 +292,20 @@ class ImmersiveDialogueOverlay extends Overlay
 				g.setFont(line.font);
 				g.setColor(Color.BLACK);
 				g.drawString(line.text, x + 1, baseline + 1);
-				g.setColor(line.color);
-				g.drawString(line.text, x, baseline);
+				if (line.prefix != null)
+				{
+					// Draw the "[N]" key marker in the hint color, then the option text in its own color.
+					g.setColor(line.prefixColor);
+					g.drawString(line.prefix, x, baseline);
+					g.setColor(line.color);
+					g.drawString(line.text.substring(line.prefix.length()),
+						x + fm.stringWidth(line.prefix), baseline);
+				}
+				else
+				{
+					g.setColor(line.color);
+					g.drawString(line.text, x, baseline);
+				}
 				y += rowH + scaled(OPTION_GAP, s);
 			}
 			else
@@ -345,13 +360,23 @@ class ImmersiveDialogueOverlay extends Overlay
 		private final Color color;
 		/** Native option child index for a clickable option line, or {@code -1} for plain text. */
 		private final int subid;
+		/** Leading "[N] " key marker drawn in {@link #prefixColor}, or {@code null} for none. */
+		private final String prefix;
+		private final Color prefixColor;
 
 		private Line(String text, Font font, Color color, int subid)
+		{
+			this(text, font, color, subid, null, null);
+		}
+
+		private Line(String text, Font font, Color color, int subid, String prefix, Color prefixColor)
 		{
 			this.text = text;
 			this.font = font;
 			this.color = color;
 			this.subid = subid;
+			this.prefix = prefix;
+			this.prefixColor = prefixColor;
 		}
 	}
 }
