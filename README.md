@@ -10,6 +10,15 @@ panel — with the **live, fully animated chat-head right beside it**.
 
 ▶ **[Watch it in action](https://www.youtube.com/shorts/3eData8jDJA)**
 
+## Quest Helper integration
+
+If [Quest Helper](https://github.com/Zoinkwiz/quest-helper) is installed, the
+option it marks as the correct quest choice is highlighted in the relocated
+panel — in a legible color you choose under *Dialogue appearance*. Quest
+Helper's own highlight color is used only to detect which option to mark.
+
+![Quest Helper option highlighted in Immersive Dialogue](docs/quest-helper-support.jpg)
+
 ## Features
 
 1. **Scale and resize** — scale the whole panel (box, avatar and text) as one unit,
@@ -21,15 +30,6 @@ panel — with the **live, fully animated chat-head right beside it**.
    speed with short voice blips picked to match the speaker. NPCs are voiced by species
    where their name gives one away, otherwise by gender; pick your own character's voice
    from three sets (A lighter, B original, C heavier).
-
-## Quest Helper integration
-
-If [Quest Helper](https://github.com/Zoinkwiz/quest-helper) is installed, the
-option it marks as the correct quest choice is highlighted in the relocated
-panel — in a legible color you choose under *Dialogue appearance*. Quest
-Helper's own highlight color is used only to detect which option to mark.
-
-![Quest Helper option highlighted in Immersive Dialogue](docs/quest-helper-support.jpg)
 
 ## License
 
