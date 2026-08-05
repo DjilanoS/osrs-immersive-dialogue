@@ -13,7 +13,8 @@ import net.runelite.client.input.MouseAdapter;
  *
  * <ul>
  *     <li><b>Blocks click-through</b> — any click landing on the box (or the head beside it) is
- *     consumed so it never reaches the 3D world underneath.</li>
+ *     consumed so it never reaches the 3D world underneath. Turning on "Click through chatbox" opts out:
+ *     the box stops swallowing clicks and they reach the world as if it were not there.</li>
  *     <li><b>ALT-drag reposition</b> — in drag mode, ALT + left-drag over the box moves it and
  *     persists the new position.</li>
  * </ul>
@@ -95,7 +96,11 @@ class DialogueMouseListener extends MouseAdapter
 		return handle(event);
 	}
 
-	/** Consumes any click landing on the box (or head) so it never reaches the 3D world underneath. */
+	/**
+	 * Consumes any click landing on the box (or head) so it never reaches the 3D world underneath — unless
+	 * "Click through chatbox" is on, in which case the box is left as a pass-through surface and the click
+	 * falls through to the world as if the box were not there.
+	 */
 	private MouseEvent handle(MouseEvent event)
 	{
 		// Let the middle button (camera drag) through.
@@ -111,11 +116,17 @@ class DialogueMouseListener extends MouseAdapter
 		{
 			return event;
 		}
-		// While the dialogue is still typing out, a left-click on the box finishes the reveal. The click is
-		// consumed below (never sent to the game); this mirrors the Space-to-skip key handling.
+		// While the dialogue is still typing out, a left-click on the box finishes the reveal. Purely local
+		// (nothing is sent to the game); this mirrors the Space-to-skip key handling.
 		if (SwingUtilities.isLeftMouseButton(event) && controller.isRevealing())
 		{
 			controller.requestSkip();
+		}
+		if (config.clickThrough())
+		{
+			// Pass-through mode: leave the event untouched so the world click (and its right-click menu)
+			// happens exactly as it would with no box on screen.
+			return event;
 		}
 		// Block the world click underneath the box (and suppress its right-click menu).
 		event.consume();

@@ -27,7 +27,9 @@ Helper's own highlight color is used only to detect which option to mark.
 3. **Fully customizable visuals** — colors, fonts, padding, border, corner rounding,
    avatar backdrop and fade transitions.
 4. **Voice blips + word-for-word reveal** — dialogue types itself out at your chosen
-   speed with short voice blips picked to match the NPC.
+   speed with short voice blips picked to match the speaker. NPCs are voiced by species
+   where their name gives one away, otherwise by gender; pick your own character's voice
+   from three sets (A lighter, B original, C heavier).
 
 ## License
 

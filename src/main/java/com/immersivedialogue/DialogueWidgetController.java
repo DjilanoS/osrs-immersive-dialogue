@@ -80,8 +80,6 @@ class DialogueWidgetController
 	private static final int OPACITY_TRANSPARENT = 255;
 	/** Below this the fade-out is treated as complete and the dialogue is fully cleared. */
 	private static final float ALPHA_EPSILON = 0.01f;
-	/** Animation id meaning "no animation" — a static head. */
-	private static final int NO_ANIM = -1;
 	/** Visible (non-whitespace) characters between voice blips while a line types out. */
 	private static final int CHARS_PER_BLIP = 3;
 
@@ -187,7 +185,7 @@ class DialogueWidgetController
 	/** The body text whose reveal is in progress, used to detect when a new line appears (client thread only). */
 	private String lastRevealBody;
 	/** The voice chosen for the speaker of the current line (client thread only). */
-	private VoiceType voiceType = VoiceType.HUMAN;
+	private VoiceType voiceType = VoiceType.HUMAN_MALE;
 	/** Round-robin index into {@link VoiceType#resources} (client thread only). */
 	private int voiceCursor;
 	/** Non-whitespace characters revealed since the last blip (client thread only). */
@@ -555,14 +553,17 @@ class DialogueWidgetController
 		final String body = bodyText;
 		if (!body.equals(lastRevealBody))
 		{
-			// New line: reset progress and pick the speaker's voice (player is always the human set).
+			// New line: reset progress and pick the speaker's voice. The player uses their configured set;
+			// NPCs are classified from their name (species first, then gender).
 			lastRevealBody = body;
 			revealedChars = 0;
 			revealAccumulator = 0f;
 			charsSinceBlip = 0;
 			voiceCursor = 0;
 			blipsDoneForLine = false;
-			voiceType = (kind == Kind.PLAYER) ? VoiceType.HUMAN : VoiceClassifier.classify(speakerName);
+			voiceType = (kind == Kind.PLAYER)
+				? VoiceType.forPlayerVoice(config.playerVoice())
+				: VoiceClassifier.classify(speakerName);
 			revealing = true;
 		}
 
@@ -1269,7 +1270,7 @@ class DialogueWidgetController
 			// Item display widgets (the object box) carry their picture on itemId, not modelId.
 			final int itemId = src.getItemId();
 			final int itemQuantity = src.getItemQuantity() > 0 ? src.getItemQuantity() : 1;
-			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
+			final int animation = src.getAnimationId();
 
 			if (createdHead == null
 				|| modelType != builtModelType
