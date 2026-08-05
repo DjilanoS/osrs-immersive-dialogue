@@ -32,6 +32,9 @@ public class ImmersiveDialoguePlugin extends Plugin
 	private ImmersiveDialogueOverlay overlay;
 
 	@Inject
+	private ImmersiveDialogueBackdropOverlay backdropOverlay;
+
+	@Inject
 	private DialogueWidgetController controller;
 
 	@Inject
@@ -53,6 +56,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 	protected void startUp()
 	{
 		overlayManager.add(overlay);
+		overlayManager.add(backdropOverlay);
 		mouseManager.registerMouseListener(mouseListener);
 		keyManager.registerKeyListener(keyListener);
 		log.debug("Immersive Dialogue started");
@@ -62,6 +66,7 @@ public class ImmersiveDialoguePlugin extends Plugin
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
+		overlayManager.remove(backdropOverlay);
 		mouseManager.unregisterMouseListener(mouseListener);
 		keyManager.unregisterKeyListener(keyListener);
 		voicePlayer.dispose();
@@ -86,7 +91,9 @@ public class ImmersiveDialoguePlugin extends Plugin
 		final int group = event.getGroupId();
 		if (group == InterfaceID.CHAT_LEFT || group == InterfaceID.CHAT_RIGHT || group == InterfaceID.CHATMENU
 			|| group == InterfaceID.MESSAGEBOX || group == InterfaceID.OBJECTBOX
-			|| group == InterfaceID.LEVELUP_DISPLAY)
+			|| group == InterfaceID.LEVELUP_DISPLAY || group == InterfaceID.CHAT_BOTH
+			|| group == InterfaceID.MESSAGEBOX_TITLED || group == InterfaceID.NOTIFICATION_DISPLAY
+			|| group == InterfaceID.MESSAGEBOX_URL || group == InterfaceID.OBJECTBOX_DOUBLE)
 		{
 			controller.reassertNativeVisibility();
 		}

@@ -19,9 +19,12 @@ import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
 /**
- * Draws the translucent dialogue box plus the speaker name, body text and options. The animated
- * head is rendered separately by {@link DialogueWidgetController} (a MODEL widget), just outside
- * this box on the speaker's natural side.
+ * Draws the translucent dialogue box plus the speaker name, body text and options. Rendered on the
+ * ABOVE_WIDGETS layer so the box shows OVER full-screen cutscene widgets (the game's FADE_OVERLAY) that
+ * would otherwise hide it. The animated head is a separate MODEL widget rendered by
+ * {@link DialogueWidgetController}, just outside this box on the speaker's natural side; its backdrop panel
+ * is drawn behind it by {@link ImmersiveDialogueBackdropOverlay} on the UNDER_WIDGETS layer so the head
+ * always sits over its own backdrop.
  */
 class ImmersiveDialogueOverlay extends Overlay
 {
@@ -44,7 +47,9 @@ class ImmersiveDialogueOverlay extends Overlay
 		this.controller = controller;
 		this.config = config;
 		setPosition(OverlayPosition.DYNAMIC);
-		setLayer(OverlayLayer.UNDER_WIDGETS);
+		// ABOVE_WIDGETS so the box + text render OVER full-screen cutscene widgets (the game's FADE_OVERLAY),
+		// which would otherwise hide an UNDER_WIDGETS box while the chat-head (a real widget) stayed visible.
+		setLayer(OverlayLayer.ABOVE_WIDGETS);
 	}
 
 	@Override
@@ -73,19 +78,8 @@ class ImmersiveDialogueOverlay extends Overlay
 		{
 			final int radius = config.cornerRadius();
 
-			// Avatar backdrop, behind the chat-head. Drawn first so the main box sits over its inner edge.
-			// The head itself is a real MODEL widget rendered above this UNDER_WIDGETS overlay, so this
-			// panel lands behind it.
-			if (config.avatarBackground())
-			{
-				final Rectangle hb = controller.getHeadBounds();
-				if (hb != null)
-				{
-					final int hp = config.backdropPadding();
-					drawPanel(g, hb.x - hp, hb.y - hp, hb.width + (hp * 2), hb.height + (hp * 2),
-						radius, config.avatarBackgroundColor());
-				}
-			}
+			// Avatar backdrop is drawn by ImmersiveDialogueBackdropOverlay (UNDER_WIDGETS) so it stays behind
+			// the live MODEL chat-head; this overlay (ABOVE_WIDGETS) draws only the box + text.
 
 			// Main backdrop.
 			final int pad = config.backdropPadding();
@@ -106,12 +100,18 @@ class ImmersiveDialogueOverlay extends Overlay
 			{
 				case NPC:
 				case PLAYER:
+				case CHAT_BOTH:
 				case MESSAGE:
+				case MESSAGE_TITLED:
+				case NOTIFICATION:
+				case MESSAGE_URL:
 				case OBJECT:
+				case OBJECT_DOUBLE:
 				case LEVELUP:
-					// MESSAGE/OBJECT/LEVELUP have no speaker name (null); they draw as body text + the continue
-					// hint. OBJECT shows its item model beside the box and LEVELUP the levelled skill's model,
-					// both rendered through the head pipeline.
+					// All text-bearing kinds share one path. MESSAGE/URL have no speaker name (null); the titled /
+					// notification narration boxes use their title as the header. OBJECT(_DOUBLE) show an item model
+					// beside the box, LEVELUP the levelled skill's model, CHAT_BOTH the speaker's head — all
+					// rendered through the head pipeline.
 					drawConversation(g, b, nameFont, bodyFont, nameColor, textColor, s);
 					break;
 				case OPTIONS:
@@ -253,9 +253,12 @@ class ImmersiveDialogueOverlay extends Overlay
 			}
 			maxKey = Math.max(maxKey, option.subid);
 			// Prefix each selectable option with the number key that picks it (native 1-5 handling). The
-			// "[N] " key marker is drawn in the hint color so it reads as a keyboard hint, like the bottom line.
+			// "[N] " key marker is normally drawn in the hint color so it reads as a keyboard hint, like the
+			// bottom line. But a Quest Helper highlight takes priority over the hint color: the "[N]" then
+			// matches the option's highlight color so the whole line (number + text) reads as recommended.
 			final String prefix = "[" + option.subid + "] ";
-			lines.add(new Line(prefix + option.text, bodyFont, color, option.subid, prefix, config.hintColor()));
+			final Color prefixColor = option.highlighted ? config.questHelperHighlightColor() : config.hintColor();
+			lines.add(new Line(prefix + option.text, bodyFont, color, option.subid, prefix, prefixColor));
 		}
 		drawTextBlock(g, b, lines, s);
 		if (config.showHints() && maxKey > 0)
