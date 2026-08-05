@@ -44,7 +44,9 @@ class DialogueWidgetController
 {
 	enum Kind
 	{
-		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT, LEVELUP
+		NONE, NPC, PLAYER, OPTIONS, MESSAGE, OBJECT, LEVELUP,
+		// Additional quest / cutscene dialogue interfaces (see detectOpenKind).
+		CHAT_BOTH, MESSAGE_TITLED, NOTIFICATION, MESSAGE_URL, OBJECT_DOUBLE
 	}
 
 	/**
@@ -217,37 +219,13 @@ class DialogueWidgetController
 		// Detect the currently-open dialogue WITHOUT touching the published fields yet: when the
 		// dialogue closes we keep drawing the previous content while the fade-out runs, so the box
 		// has something to fade rather than vanishing instantly.
-		Kind detected = Kind.NONE;
-		boolean isPlayer = false;
-		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
-		{
-			detected = Kind.NPC;
-		}
-		else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
-		{
-			detected = Kind.PLAYER;
-			isPlayer = true;
-		}
-		else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
-		{
-			detected = Kind.OPTIONS;
-		}
-		else if (visible(client.getWidget(InterfaceID.Messagebox.UNIVERSE)))
-		{
-			// Plain "click to continue" message box (quest / system narration): no speaker, no head.
-			detected = Kind.MESSAGE;
-		}
-		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
-		{
-			// Item message box ("You show the X to Y."): an item model + text, no speaker.
-			detected = Kind.OBJECT;
-		}
-		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
-		{
-			// Skill level-up interface ("Congratulations, you just advanced..."): two text lines + a skill model.
-			detected = Kind.LEVELUP;
-		}
-		final boolean open = detected != Kind.NONE;
+		final Kind detected = detectOpenKind();
+		// PLAYER puts the head on the right; CHAT_BOTH decides its side during extraction (see below).
+		boolean isPlayer = detected == Kind.PLAYER;
+		// Stay out of an unskippable, bodyless cutscene pause entirely: treat it as "no dialogue open" so we
+		// draw nothing and leave the native UI untouched, rather than covering the scene with an empty box
+		// and a misleading "Press Space to continue" hint (see bodylessUnskippablePause).
+		final boolean open = detected != Kind.NONE && !bodylessUnskippablePause(detected);
 
 		updateAlpha(open, dt);
 
@@ -258,13 +236,17 @@ class DialogueWidgetController
 			revealing = false;
 			skipRequested = false;
 			lastRevealBody = null;
-			// Still fading out: retain last frame's content + head (only nudge the head's opacity).
+			// Hide the relocated head immediately. If !open is because an UNRECOGNISED dialogue interface is
+			// actually on screen (a quest dialogue type we don't handle yet), retaining the head would leave it
+			// floating over the scene with no box. The box below still fades out harmlessly with nothing behind
+			// it, so only the head — the part that looks broken — is dropped early.
+			hideHead();
+			// Still fading out: retain last frame's box content so it fades rather than vanishing instantly.
 			if (fadeActive() && displayAlpha > ALPHA_EPSILON)
 			{
-				applyHeadOpacity();
 				return;
 			}
-			// Fully closed (or fade disabled): clear everything and hide the head.
+			// Fully closed (or fade disabled): clear everything.
 			clearDialogue();
 			return;
 		}
@@ -309,6 +291,40 @@ class DialogueWidgetController
 				bodyText = joinLines(text(InterfaceID.LevelupDisplay.TEXT1), text(InterfaceID.LevelupDisplay.TEXT2));
 				headSource = levelupModel();
 				break;
+			case CHAT_BOTH:
+			{
+				// Two-person conversation: one shared name + text line, with an NPC head (LEFT) and a player
+				// head (RIGHT). We draw a single head, so pick the current speaker (best-effort) and place it on
+				// the matching side (NPC left, player right).
+				speakerName = text(InterfaceID.ChatBoth.NAMES);
+				bodyText = text(InterfaceID.ChatBoth.TEXT);
+				final Widget left = client.getWidget(InterfaceID.ChatBoth.LEFT);
+				final Widget right = client.getWidget(InterfaceID.ChatBoth.RIGHT);
+				final boolean useRight = chatBothSpeakerIsRight(left, right);
+				headSource = useRight ? right : left;
+				isPlayer = useRight;
+				break;
+			}
+			case MESSAGE_TITLED:
+				// Titled narration box: show the title as the header and the body below it.
+				speakerName = text(InterfaceID.MessageboxTitled.TITLE);
+				bodyText = text(InterfaceID.MessageboxTitled.TEXT);
+				break;
+			case NOTIFICATION:
+				// Notification narration (quest cutscene text): title as header, main text as body.
+				speakerName = text(InterfaceID.NotificationDisplay.TITLE_TEXT);
+				bodyText = text(InterfaceID.NotificationDisplay.MAIN_TEXT);
+				break;
+			case MESSAGE_URL:
+				// URL message box: just the body text (the clickable URL stays native, see hideNative).
+				bodyText = text(InterfaceID.MessageboxUrl.TEXT);
+				break;
+			case OBJECT_DOUBLE:
+				// Two-item message box: relocate the first item model beside the text (rendered like a head).
+				// Its TEXT widget bakes in the "Click here to continue" line, so strip that before redrawing.
+				headSource = client.getWidget(InterfaceID.ObjectboxDouble.MODEL1);
+				bodyText = stripContinuePrompt(text(InterfaceID.ObjectboxDouble.TEXT));
+				break;
 			default:
 				break;
 		}
@@ -329,9 +345,22 @@ class DialogueWidgetController
 		final int ch = client.getCanvasHeight();
 		final float s = scale();
 		final int boxW = scaled(BOX_W, s);
-		// Options grow the box to fit their count (already scaled inside optionsBoxHeight); plain dialogue
-		// keeps the fixed, scaled height.
-		final int boxH = (kind == Kind.OPTIONS) ? optionsBoxHeight() : scaled(BOX_H, s);
+		// Options grow the box to fit their count (already scaled inside optionsBoxHeight); a hint-only box
+		// (no speaker, body or head — e.g. a "Press Space to continue" cutscene pause) shrinks to a single
+		// line so it doesn't hog the screen; plain dialogue keeps the fixed, scaled height.
+		final int boxH;
+		if (kind == Kind.OPTIONS)
+		{
+			boxH = optionsBoxHeight();
+		}
+		else if (hintOnly())
+		{
+			boxH = hintOnlyBoxHeight();
+		}
+		else
+		{
+			boxH = scaled(BOX_H, s);
+		}
 		final int x = ((cw - boxW) / 2) + effectiveHorizontalOffset();
 		final int y = ch - boxH - effectiveBottomMargin();
 		bounds = new Rectangle(x, y, boxW, boxH);
@@ -356,6 +385,138 @@ class DialogueWidgetController
 		// Finally, suppress the native dialogue (hide the display widgets, dim the interactive ones). Done last
 		// so every read above sees them normal; re-applied each frame because the client rebuilds them per line.
 		hideNative(kind);
+	}
+
+	/**
+	 * Detect which dialogue interface is currently open by testing each interface's {@code UNIVERSE} root for
+	 * visibility, in priority order; returns {@link Kind#NONE} when no known dialogue is open. Shared by
+	 * {@link #apply()} and {@link #reassertNativeVisibility()} so the interface list lives in ONE place —
+	 * adding support for a new quest dialogue type is a single edit here (plus its extraction / hideNative
+	 * / overlay cases). The interfaces are mutually exclusive, so the order is priority only, not correctness.
+	 */
+	private Kind detectOpenKind()
+	{
+		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
+		{
+			return Kind.NPC;
+		}
+		if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
+		{
+			return Kind.PLAYER;
+		}
+		if (visible(client.getWidget(InterfaceID.ChatBoth.UNIVERSE)))
+		{
+			// Two-person conversation (NPC + player heads share one name / text line).
+			return Kind.CHAT_BOTH;
+		}
+		if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
+		{
+			return Kind.OPTIONS;
+		}
+		if (visible(client.getWidget(InterfaceID.Messagebox.UNIVERSE)))
+		{
+			// Plain "click to continue" message box (quest / system narration): no speaker, no head.
+			return Kind.MESSAGE;
+		}
+		if (visible(client.getWidget(InterfaceID.MessageboxTitled.UNIVERSE)))
+		{
+			// Titled narration box: a title line + body, no speaker head.
+			return Kind.MESSAGE_TITLED;
+		}
+		if (visible(client.getWidget(InterfaceID.NotificationDisplay.UNIVERSE)))
+		{
+			// Notification narration box (quest cutscene text): title + main text, no head.
+			return Kind.NOTIFICATION;
+		}
+		if (visible(client.getWidget(InterfaceID.MessageboxUrl.UNIVERSE)))
+		{
+			// Message box with a clickable URL: body text, no head.
+			return Kind.MESSAGE_URL;
+		}
+		if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
+		{
+			// Item message box ("You show the X to Y."): an item model + text, no speaker.
+			return Kind.OBJECT;
+		}
+		if (visible(client.getWidget(InterfaceID.ObjectboxDouble.UNIVERSE)))
+		{
+			// Two-item message box: two item models + text, no speaker.
+			return Kind.OBJECT_DOUBLE;
+		}
+		if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
+		{
+			// Skill level-up interface ("Congratulations, you just advanced..."): two text lines + a skill model.
+			return Kind.LEVELUP;
+		}
+		return Kind.NONE;
+	}
+
+	/**
+	 * Best-effort choice of which {@link InterfaceID.ChatBoth} head is the current speaker: prefer the only
+	 * head that carries a model; if both (or neither) are modelled we cannot tell the speaker from the widgets
+	 * alone, so default to the NPC (LEFT). Returns {@code true} when the RIGHT (player) head should be drawn.
+	 */
+	private static boolean chatBothSpeakerIsRight(Widget left, Widget right)
+	{
+		final boolean leftModel = left != null && left.getModelType() > 0;
+		final boolean rightModel = right != null && right.getModelType() > 0;
+		// Only the player head has a model: show the player. Otherwise default to the NPC head on the left.
+		return rightModel && !leftModel;
+	}
+
+	/**
+	 * A cutscene "pause" the plugin stays out of entirely: a narration interface with no title and no body
+	 * text (only a bare continue prompt would show) that the player ALSO cannot advance — i.e. there is no
+	 * visible native continue component. For these we render nothing and leave the native UI untouched, so
+	 * the plugin never covers an unskippable cutscene with an empty box or a misleading "Press Space to
+	 * continue" hint.
+	 *
+	 * A bodyless pause the player CAN advance (a visible continue) is deliberately NOT suppressed here — it
+	 * still shows the compact single-line hint box (see {@link #hintOnly()} / {@link #hintOnlyBoxHeight()}).
+	 * Only the text/narration kinds can be a bare pause; NPC / PLAYER / CHAT_BOTH / OBJECT(_DOUBLE) / LEVELUP
+	 * always carry a head, model or options, and OPTIONS is a menu — so none of those ever qualifies.
+	 */
+	private boolean bodylessUnskippablePause(Kind k)
+	{
+		final int titleId;
+		final int bodyId;
+		final int continueId;
+		switch (k)
+		{
+			case MESSAGE:
+				titleId = -1;
+				bodyId = InterfaceID.Messagebox.TEXT;
+				continueId = InterfaceID.Messagebox.CONTINUE;
+				break;
+			case MESSAGE_TITLED:
+				titleId = InterfaceID.MessageboxTitled.TITLE;
+				bodyId = InterfaceID.MessageboxTitled.TEXT;
+				continueId = InterfaceID.MessageboxTitled.CONTINUE;
+				break;
+			case NOTIFICATION:
+				titleId = InterfaceID.NotificationDisplay.TITLE_TEXT;
+				bodyId = InterfaceID.NotificationDisplay.MAIN_TEXT;
+				continueId = -1; // NotificationDisplay has no continue component.
+				break;
+			case MESSAGE_URL:
+				titleId = -1;
+				bodyId = InterfaceID.MessageboxUrl.TEXT;
+				continueId = InterfaceID.MessageboxUrl.CONTINUE;
+				break;
+			default:
+				return false;
+		}
+		if (!isBlank(titleId >= 0 ? text(titleId) : null) || !isBlank(text(bodyId)))
+		{
+			return false; // has narration to show
+		}
+		// Bodyless: suppress only when the player cannot advance it (no visible native continue prompt).
+		return continueId < 0 || !visible(client.getWidget(continueId));
+	}
+
+	private static boolean isBlank(String s)
+	{
+		return s == null || s.isEmpty();
 	}
 
 	/** True when the fade feature is on and has a non-zero duration (otherwise transitions are instant). */
@@ -566,6 +727,32 @@ class DialogueWidgetController
 			h += bodyPx + textBuf + lineGap;
 		}
 		return Math.min(h, scaled(OPTIONS_MAX_H, s));
+	}
+
+	/**
+	 * True when the box would draw only the "Press Space to continue" hint — no speaker name, no body text
+	 * and no head/model. Common during cutscene pauses; used to shrink the box so it doesn't cover the scene.
+	 */
+	private boolean hintOnly()
+	{
+		final boolean noName = speakerName == null || speakerName.isEmpty();
+		final boolean noBody = bodyText == null || bodyText.isEmpty();
+		final boolean noHead = headSource == null || headSource.getModelType() <= 0;
+		return noName && noBody && noHead;
+	}
+
+	/**
+	 * Compact height for a {@link #hintOnly()} box: one bottom hint line plus inset padding. The overlay
+	 * anchors the hint near the box bottom, and {@code bodyPx + textBuf} over-estimates one line's height,
+	 * so this yields a snug single-line box (scaled with the same terms the overlay draws with).
+	 */
+	private int hintOnlyBoxHeight()
+	{
+		final float s = scale();
+		final int bodyPx = Math.max(ImmersiveDialogueOverlay.MIN_FONT_PX, scaled(config.textSize(), s));
+		final int inset = scaled(ImmersiveDialogueOverlay.INSET, s);
+		final int textBuf = scaled(OPTION_TEXT_BUFFER, s);
+		return bodyPx + textBuf + inset;
 	}
 
 	/** Begins an ALT-drag: snapshot the current Position offsets so {@link #dragBy} deltas move from here. */
@@ -875,6 +1062,39 @@ class DialogueWidgetController
 				hideLevelupModel();
 				dim(InterfaceID.LevelupDisplay.CONTINUE);
 				break;
+			case CHAT_BOTH:
+				// Hide both native heads (we relocate one), the shared name and text; dim CONTINUE so native
+				// spacebar / click still advances.
+				hide(InterfaceID.ChatBoth.LEFT);
+				hide(InterfaceID.ChatBoth.RIGHT);
+				hide(InterfaceID.ChatBoth.NAMES);
+				hide(InterfaceID.ChatBoth.TEXT);
+				dim(InterfaceID.ChatBoth.CONTINUE);
+				break;
+			case MESSAGE_TITLED:
+				hide(InterfaceID.MessageboxTitled.TITLE);
+				hide(InterfaceID.MessageboxTitled.TEXT);
+				dim(InterfaceID.MessageboxTitled.CONTINUE);
+				break;
+			case NOTIFICATION:
+				// NotificationDisplay has no dedicated CONTINUE component; advancing is driven by the client's
+				// continue handler (spacebar / click on the box). Hide only the text we redraw and leave the
+				// container / background untouched so click-to-continue still lands.
+				hide(InterfaceID.NotificationDisplay.TITLE_TEXT);
+				hide(InterfaceID.NotificationDisplay.MAIN_TEXT);
+				break;
+			case MESSAGE_URL:
+				// Hide the body we redraw; dim CONTINUE. Leave the URL child alone so the link stays clickable.
+				hide(InterfaceID.MessageboxUrl.TEXT);
+				dim(InterfaceID.MessageboxUrl.CONTINUE);
+				break;
+			case OBJECT_DOUBLE:
+				// Hide both item models and DIM (not hide) TEXT — its baked-in "Click here to continue" must
+				// stay interactive for native spacebar / click to advance (mirrors the single OBJECT case).
+				hide(InterfaceID.ObjectboxDouble.MODEL1);
+				hide(InterfaceID.ObjectboxDouble.MODEL2);
+				dim(InterfaceID.ObjectboxDouble.TEXT);
+				break;
 			default:
 				break;
 		}
@@ -974,32 +1194,10 @@ class DialogueWidgetController
 		{
 			return;
 		}
-		Kind detected = Kind.NONE;
-		if (visible(client.getWidget(InterfaceID.ChatLeft.UNIVERSE)))
-		{
-			detected = Kind.NPC;
-		}
-		else if (visible(client.getWidget(InterfaceID.ChatRight.UNIVERSE)))
-		{
-			detected = Kind.PLAYER;
-		}
-		else if (visible(client.getWidget(InterfaceID.Chatmenu.UNIVERSE)))
-		{
-			detected = Kind.OPTIONS;
-		}
-		else if (visible(client.getWidget(InterfaceID.Messagebox.UNIVERSE)))
-		{
-			detected = Kind.MESSAGE;
-		}
-		else if (visible(client.getWidget(InterfaceID.Objectbox.UNIVERSE)))
-		{
-			detected = Kind.OBJECT;
-		}
-		else if (visible(client.getWidget(InterfaceID.LevelupDisplay.UNIVERSE)))
-		{
-			detected = Kind.LEVELUP;
-		}
-		if (detected != Kind.NONE)
+		final Kind detected = detectOpenKind();
+		// Mirror apply()'s suppression: never hide the native box for a bodyless, unskippable pause — the
+		// plugin draws nothing for those, so the native UI must stay visible.
+		if (detected != Kind.NONE && !bodylessUnskippablePause(detected))
 		{
 			hideNative(detected);
 		}
