@@ -80,8 +80,6 @@ class DialogueWidgetController
 	private static final int OPACITY_TRANSPARENT = 255;
 	/** Below this the fade-out is treated as complete and the dialogue is fully cleared. */
 	private static final float ALPHA_EPSILON = 0.01f;
-	/** Animation id meaning "no animation" — a static head. */
-	private static final int NO_ANIM = -1;
 	/** Visible (non-whitespace) characters between voice blips while a line types out. */
 	private static final int CHARS_PER_BLIP = 3;
 
@@ -1269,7 +1267,7 @@ class DialogueWidgetController
 			// Item display widgets (the object box) carry their picture on itemId, not modelId.
 			final int itemId = src.getItemId();
 			final int itemQuantity = src.getItemQuantity() > 0 ? src.getItemQuantity() : 1;
-			final int animation = config.animateHead() ? src.getAnimationId() : NO_ANIM;
+			final int animation = src.getAnimationId();
 
 			if (createdHead == null
 				|| modelType != builtModelType

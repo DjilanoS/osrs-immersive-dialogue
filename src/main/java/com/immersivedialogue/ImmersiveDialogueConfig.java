@@ -64,15 +64,15 @@ public interface ImmersiveDialogueConfig extends Config
 	String voiceSection = "voice";
 
 	@ConfigItem(
-		keyName = "animateHead",
-		name = "Animate head",
-		description = "Play the talking head animation instead of a static head.",
+		keyName = "clickThrough",
+		name = "Click through chatbox",
+		description = "Allows you to click through the chatbox - useful for bossing or smaller screens",
 		section = generalSection,
 		position = 0
 	)
-	default boolean animateHead()
+	default boolean clickThrough()
 	{
-		return true;
+		return false;
 	}
 
 	@Range(min = 50, max = 150)
