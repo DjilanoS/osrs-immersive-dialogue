@@ -373,7 +373,7 @@ public interface ImmersiveDialogueConfig extends Config
 	@ConfigItem(
 		keyName = "voiceBlips",
 		name = "Voice blips",
-		description = "Reveal NPC and player dialogue text letter-by-letter and play short voice blips in sequence as it types. The blip set is chosen automatically from the NPC's type.",
+		description = "Reveal NPC and player dialogue text letter-by-letter and play short voice blips in sequence as it types. An NPC's blip set is chosen automatically from their name.",
 		section = voiceSection,
 		position = 0
 	)
@@ -407,5 +407,17 @@ public interface ImmersiveDialogueConfig extends Config
 	default int voiceVolume()
 	{
 		return 40;
+	}
+
+	@ConfigItem(
+		keyName = "playerVoice",
+		name = "Player voice",
+		description = "Which blip set your own character speaks with. A is lighter, B is the original, C is heavier. NPC voices are unaffected.",
+		section = voiceSection,
+		position = 3
+	)
+	default PlayerVoice playerVoice()
+	{
+		return PlayerVoice.VOICE_B;
 	}
 }
