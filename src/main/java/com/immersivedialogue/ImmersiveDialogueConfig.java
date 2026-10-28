@@ -180,6 +180,18 @@ public interface ImmersiveDialogueConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "showEmptyPauses",
+		name = "Show empty cutscene pauses",
+		description = "Show the compact Press Space to continue box during cutscene pauses that have no text.",
+		section = appearanceSection,
+		position = 13
+	)
+	default boolean showEmptyPauses()
+	{
+		return false;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "textColor",
