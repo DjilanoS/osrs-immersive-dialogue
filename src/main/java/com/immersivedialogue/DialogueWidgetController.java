@@ -4,7 +4,9 @@ import java.awt.Color;
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Getter;
@@ -149,6 +151,8 @@ class DialogueWidgetController
 	private final List<Integer> hiddenComponents = new ArrayList<>();
 	/** Native interactive components we made transparent this frame (setOpacity, kept usable), restored next apply(). */
 	private final List<Integer> dimmedComponents = new ArrayList<>();
+	// Original text of native widgets we blanked this frame, restored next apply()
+	private final Map<Integer, String> blankedTexts = new HashMap<>();
 
 	// Our head widgets, reused across frames (see renderHead).
 	private Widget headSource;
@@ -222,8 +226,8 @@ class DialogueWidgetController
 		boolean isPlayer = detected == Kind.PLAYER;
 		// Stay out of an unskippable, bodyless cutscene pause entirely: treat it as "no dialogue open" so we
 		// draw nothing and leave the native UI untouched, rather than covering the scene with an empty box
-		// and a misleading "Press Space to continue" hint (see bodylessUnskippablePause).
-		final boolean open = detected != Kind.NONE && !bodylessUnskippablePause(detected);
+		// and a misleading "Press Space to continue" hint (see bodylessPauseSuppressed).
+		final boolean open = detected != Kind.NONE && !bodylessPauseSuppressed(detected);
 
 		updateAlpha(open, dt);
 
@@ -263,12 +267,12 @@ class DialogueWidgetController
 			case NPC:
 				headSource = client.getWidget(InterfaceID.ChatLeft.HEAD);
 				speakerName = text(InterfaceID.ChatLeft.NAME);
-				bodyText = text(InterfaceID.ChatLeft.TEXT);
+				bodyText = reflow(text(InterfaceID.ChatLeft.TEXT));
 				break;
 			case PLAYER:
 				headSource = client.getWidget(InterfaceID.ChatRight.HEAD);
 				speakerName = text(InterfaceID.ChatRight.NAME);
-				bodyText = text(InterfaceID.ChatRight.TEXT);
+				bodyText = reflow(text(InterfaceID.ChatRight.TEXT));
 				break;
 			case OPTIONS:
 				// Read option text while the widgets are still in their natural state (before hideNative).
@@ -276,13 +280,13 @@ class DialogueWidgetController
 				break;
 			case MESSAGE:
 				// Plain narration box: just the body text, no speaker name and no head.
-				bodyText = text(InterfaceID.Messagebox.TEXT);
+				bodyText = reflow(text(InterfaceID.Messagebox.TEXT));
 				break;
 			case OBJECT:
 				// Item message box: relocate the item model (rendered like a head) beside the text. Its TEXT
 				// widget bakes in the "Click here to continue" line, so strip that before redrawing.
 				headSource = client.getWidget(InterfaceID.Objectbox.ITEM);
-				bodyText = stripContinuePrompt(text(InterfaceID.Objectbox.TEXT));
+				bodyText = reflow(stripContinuePrompt(text(InterfaceID.Objectbox.TEXT)));
 				break;
 			case LEVELUP:
 				// Level-up: combine the two message lines and relocate the levelled skill's model like a head.
@@ -295,7 +299,7 @@ class DialogueWidgetController
 				// head (RIGHT). We draw a single head, so pick the current speaker (best-effort) and place it on
 				// the matching side (NPC left, player right).
 				speakerName = text(InterfaceID.ChatBoth.NAMES);
-				bodyText = text(InterfaceID.ChatBoth.TEXT);
+				bodyText = reflow(text(InterfaceID.ChatBoth.TEXT));
 				final Widget left = client.getWidget(InterfaceID.ChatBoth.LEFT);
 				final Widget right = client.getWidget(InterfaceID.ChatBoth.RIGHT);
 				final boolean useRight = chatBothSpeakerIsRight(left, right);
@@ -306,22 +310,22 @@ class DialogueWidgetController
 			case MESSAGE_TITLED:
 				// Titled narration box: show the title as the header and the body below it.
 				speakerName = text(InterfaceID.MessageboxTitled.TITLE);
-				bodyText = text(InterfaceID.MessageboxTitled.TEXT);
+				bodyText = reflow(text(InterfaceID.MessageboxTitled.TEXT));
 				break;
 			case NOTIFICATION:
 				// Notification narration (quest cutscene text): title as header, main text as body.
 				speakerName = text(InterfaceID.NotificationDisplay.TITLE_TEXT);
-				bodyText = text(InterfaceID.NotificationDisplay.MAIN_TEXT);
+				bodyText = reflow(text(InterfaceID.NotificationDisplay.MAIN_TEXT));
 				break;
 			case MESSAGE_URL:
 				// URL message box: just the body text (the clickable URL stays native, see hideNative).
-				bodyText = text(InterfaceID.MessageboxUrl.TEXT);
+				bodyText = reflow(text(InterfaceID.MessageboxUrl.TEXT));
 				break;
 			case OBJECT_DOUBLE:
 				// Two-item message box: relocate the first item model beside the text (rendered like a head).
 				// Its TEXT widget bakes in the "Click here to continue" line, so strip that before redrawing.
 				headSource = client.getWidget(InterfaceID.ObjectboxDouble.MODEL1);
-				bodyText = stripContinuePrompt(text(InterfaceID.ObjectboxDouble.TEXT));
+				bodyText = reflow(stripContinuePrompt(text(InterfaceID.ObjectboxDouble.TEXT)));
 				break;
 			default:
 				break;
@@ -421,7 +425,9 @@ class DialogueWidgetController
 			// Titled narration box: a title line + body, no speaker head.
 			return Kind.MESSAGE_TITLED;
 		}
-		if (visible(client.getWidget(InterfaceID.NotificationDisplay.UNIVERSE)))
+		// Fix for blank popups: leave combat task / collection log / sailing toasts alone
+		final Widget notification = client.getWidget(InterfaceID.NotificationDisplay.UNIVERSE);
+		if (visible(notification) && inChatbox(notification))
 		{
 			// Notification narration box (quest cutscene text): title + main text, no head.
 			return Kind.NOTIFICATION;
@@ -469,12 +475,12 @@ class DialogueWidgetController
 	 * the plugin never covers an unskippable cutscene with an empty box or a misleading "Press Space to
 	 * continue" hint.
 	 *
-	 * A bodyless pause the player CAN advance (a visible continue) is deliberately NOT suppressed here — it
-	 * still shows the compact single-line hint box (see {@link #hintOnly()} / {@link #hintOnlyBoxHeight()}).
+	 * A bodyless pause the player CAN advance is suppressed too unless {@code showEmptyPauses} is on, in which
+	 * case it shows the compact single-line hint box (see {@link #hintOnly()} / {@link #hintOnlyBoxHeight()}).
 	 * Only the text/narration kinds can be a bare pause; NPC / PLAYER / CHAT_BOTH / OBJECT(_DOUBLE) / LEVELUP
 	 * always carry a head, model or options, and OPTIONS is a menu — so none of those ever qualifies.
 	 */
-	private boolean bodylessUnskippablePause(Kind k)
+	private boolean bodylessPauseSuppressed(Kind k)
 	{
 		final int titleId;
 		final int bodyId;
@@ -508,8 +514,24 @@ class DialogueWidgetController
 		{
 			return false; // has narration to show
 		}
-		// Bodyless: suppress only when the player cannot advance it (no visible native continue prompt).
+		// Fix for empty "Press Space to continue" boxes during cutscenes
+		if (!config.showEmptyPauses())
+		{
+			return true;
+		}
 		return continueId < 0 || !visible(client.getWidget(continueId));
+	}
+
+	private static boolean inChatbox(Widget w)
+	{
+		for (Widget c = w; c != null; c = c.getParent())
+		{
+			if (c.getId() == InterfaceID.Chatbox.UNIVERSE)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean isBlank(String s)
@@ -1009,6 +1031,12 @@ class DialogueWidgetController
 		return s.trim();
 	}
 
+	// Fix for word wrap: drop the game's line breaks so our box wraps the text itself
+	static String reflow(String text)
+	{
+		return text == null ? null : text.replaceAll("\\s*\n\\s*", " ");
+	}
+
 	/**
 	 * Make the native dialogue invisible while keeping it functional. The chatbox's (otherwise empty) beige
 	 * dialogue background and the non-interactive display widgets we redraw — speaker NAME, body TEXT, chat
@@ -1054,6 +1082,7 @@ class DialogueWidgetController
 				// the continue target, so it must stay interactive for native spacebar / click to advance.
 				hide(InterfaceID.Objectbox.ITEM);
 				dim(InterfaceID.Objectbox.TEXT);
+				blankText(InterfaceID.Objectbox.TEXT);
 				break;
 			case LEVELUP:
 				// Hide the two message lines and the native (clipped) skill model we redraw; dim (not hide)
@@ -1095,6 +1124,7 @@ class DialogueWidgetController
 				hide(InterfaceID.ObjectboxDouble.MODEL1);
 				hide(InterfaceID.ObjectboxDouble.MODEL2);
 				dim(InterfaceID.ObjectboxDouble.TEXT);
+				blankText(InterfaceID.ObjectboxDouble.TEXT);
 				break;
 			default:
 				break;
@@ -1123,6 +1153,22 @@ class DialogueWidgetController
 		{
 			setOpacityDeep(w, OPACITY_TRANSPARENT);
 			dimmedComponents.add(componentId);
+		}
+	}
+
+	// Fix for item message text showing through: dimming alone doesn't hide it
+	private void blankText(int componentId)
+	{
+		final Widget w = client.getWidget(componentId);
+		if (w == null)
+		{
+			return;
+		}
+		final String t = w.getText();
+		if (t != null && !t.isEmpty())
+		{
+			blankedTexts.put(componentId, t);
+			w.setText("");
 		}
 	}
 
@@ -1178,6 +1224,17 @@ class DialogueWidgetController
 			}
 		}
 		dimmedComponents.clear();
+
+		for (final Map.Entry<Integer, String> e : blankedTexts.entrySet())
+		{
+			final Widget w = client.getWidget(e.getKey());
+			// Only restore if the game hasn't already written a new line
+			if (w != null && (w.getText() == null || w.getText().isEmpty()))
+			{
+				w.setText(e.getValue());
+			}
+		}
+		blankedTexts.clear();
 	}
 
 	/**
@@ -1198,7 +1255,7 @@ class DialogueWidgetController
 		final Kind detected = detectOpenKind();
 		// Mirror apply()'s suppression: never hide the native box for a bodyless, unskippable pause — the
 		// plugin draws nothing for those, so the native UI must stay visible.
-		if (detected != Kind.NONE && !bodylessUnskippablePause(detected))
+		if (detected != Kind.NONE && !bodylessPauseSuppressed(detected))
 		{
 			hideNative(detected);
 		}
@@ -1218,14 +1275,11 @@ class DialogueWidgetController
 			// Plugin-owned container that exclusively holds our MODEL widget. Recreating the model
 			// child inside it (deleteAllChildren + createChild) resets the renderer's internal frame
 			// counter to 0; because the container is ours, that wipe never touches game-owned
-			// dynamic children on the interface root. We compare the parent by id, NOT by instance:
-			// the ancestor walk hands back a fresh root wrapper on dialogue redraws, so an instance
-			// check would treat every redraw as a new root, spawn a new container, and orphan the
-			// old one (with its head still rendering) — the cause of heads stacking up.
-			if (headContainer != null && headContainer.getParentId() != parent.getId())
+			// dynamic children on the interface root.
+			// Fix for vanishing chat heads: rebuild if an interface reload orphaned our container
+			if (headContainer != null && !isAttached(parent, headContainer))
 			{
-				// Genuine root change (e.g. fixed/resizable display switch): drop the stale
-				// container first so its head can never linger.
+				log.debug("Head container orphaned by an interface reload; rebuilding");
 				resetHead();
 			}
 			if (headContainer == null)
@@ -1273,6 +1327,7 @@ class DialogueWidgetController
 			final int animation = src.getAnimationId();
 
 			if (createdHead == null
+				|| !isAttached(headContainer, createdHead)
 				|| modelType != builtModelType
 				|| modelId != builtModelId
 				|| itemId != builtItemId
@@ -1399,6 +1454,23 @@ class DialogueWidgetController
 		builtModelId = Integer.MIN_VALUE;
 		builtItemId = Integer.MIN_VALUE;
 		builtAnimation = Integer.MIN_VALUE;
+	}
+
+	// True if child is still a live dynamic child of parent (list is compacted, so match by identity not index)
+	private static boolean isAttached(Widget parent, Widget child)
+	{
+		final Widget[] kids = parent.getDynamicChildren();
+		if (kids != null)
+		{
+			for (final Widget k : kids)
+			{
+				if (k == child)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/** Walk to the top-level interface root, which spans the canvas and does not clip on-screen children. */
